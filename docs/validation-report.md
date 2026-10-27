@@ -1,5 +1,7 @@
 # 局部重构验证报告（R1–R6）
 
+后续 v2.2.0（用量分布、额度历史与统计图）的验证记录与**未执行项**见 [v2.2.0 发布执行记录](v2.2.0-release-execution.md)。
+
 后续 v2.1.0（峰谷计费时段 + 常驻卡片重排）的验证记录与**未执行项**见 [v2.1.0 发布执行记录](v2.1.0-release-execution.md)。
 
 后续 v2.0.5 智谱／Z.ai Coding Plan 窗口修复的验证记录见 [Coding Plan 窗口修复执行记录](zai-credit-limit-fix-execution.md)。
