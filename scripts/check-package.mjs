@@ -30,6 +30,14 @@ for (const required of [pkg.main, pkg.exports["./client"], pkg.dsh.bundle.patch,
   "lib/season.js", "README.md", "CHANGELOG.md"]) {
   assert.ok(paths.has(required.replace(/^\.\//, "")), `产物缺少 ${required}`);
 }
+// Plugins 面板的标题与图标同样要进产物并能经 ESM 解析器取到：
+// checkout 里完好、装完却只剩包名与占位图，是这条契约最静默的坏法。
+assert.equal(pkg.exports["./package.json"], "./package.json");
+assert.equal(pkg.exports["./locale/*.json"], "./locale/*.json");
+assert.equal(pkg.icon, "./icon.svg");
+for (const required of ["icon.svg", "locale/en.json", "locale/zh.json"]) {
+  assert.ok(paths.has(required), `产物缺少插件展示元信息 ${required}`);
+}
 assert.equal(manifest.name, "dsh-token-quota");
 assert.ok(!manifest.files.some((file) => file.path.startsWith("node_modules/") || file.path.startsWith("test-results/")));
 console.log(`打包验证通过：${manifest.files.length} 个文件，${manifest.size} 字节`);

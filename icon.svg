@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Usage Monitor">
+  <!-- Original artwork: the card's two bars — a period quota and today's usage — on its own tile. -->
+  <defs>
+    <linearGradient id="qm-tile" x1="4" y1="4" x2="60" y2="60" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0F1A2B"/>
+      <stop offset="0.55" stop-color="#1C3557"/>
+      <stop offset="1" stop-color="#2F6BFF"/>
+    </linearGradient>
+    <linearGradient id="qm-quota" x1="13" y1="23" x2="51" y2="32" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5EEAD4"/>
+      <stop offset="1" stop-color="#38BDF8"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#qm-tile)"/>
+  <!-- Period quota: track plus the used share. -->
+  <rect x="13" y="23" width="38" height="9" rx="4.5" fill="#27415F"/>
+  <rect x="13" y="23" width="28" height="9" rx="4.5" fill="url(#qm-quota)"/>
+  <!-- Today's usage: the shorter second bar, a fraction of the window. -->
+  <rect x="13" y="38" width="38" height="6" rx="3" fill="#27415F"/>
+  <rect x="13" y="38" width="15" height="6" rx="3" fill="#93C5FD"/>
+</svg>

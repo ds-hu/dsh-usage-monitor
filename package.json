@@ -2,6 +2,7 @@
   "name": "dsh-token-quota",
   "version": "2.1.0",
   "description": "DeepSeek Harness 用量监控：官方侧栏完整／紧凑卡片、供应商分栏详情及概览、供应商、设置配置面板，按当前会话显示周期限额、逐币种余额与报告用量费用；保留凭据类别隔离、自动识别普通 API Key 与本地今日用量统计。",
+  "icon": "./icon.svg",
   "author": "shxtmaker <https://github.com/shxtmaker>",
   "license": "MIT",
   "homepage": "https://github.com/shxtmaker/dsh-token-quota",
@@ -18,6 +19,8 @@
     "scripts",
     "playwright.config.mjs",
     "cordis.patch.yml",
+    "icon.svg",
+    "locale/*.json",
     "README.md",
     "CHANGELOG.md",
     "docs/windows-desktop-adaptation.md",
@@ -29,6 +32,7 @@
   "exports": {
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
+    "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
   },
   "dsh": {
