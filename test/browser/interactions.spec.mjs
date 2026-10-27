@@ -421,3 +421,77 @@ test("A3 embedded page restores its host scroll position after supplier configur
   await expect(panel.locator(".qm-overview-grid")).toBeVisible();
   await expect.poll(() => page.locator("#settings").evaluate((node) => node.scrollTop)).toBe(scrollTop);
 });
+
+// ---------- 关注限额：卡片多条进度条 + 配置页复选列表 ----------
+
+/** 三个可关注窗口的 OpenCode 载荷；displayKeys 决定卡片画哪几条、按什么顺序。 */
+const watchedFixture = (displayKeys, todayTokens = 1_240_000) => {
+  const fixture = displayFixture();
+  const opencode = fixture.suppliers.find((s) => s.id === "opencode");
+  Object.assign(opencode, {
+    todayTokens, displayKeys,
+    entries: [
+      { kind: "win", key: "window.5h", short: "5h", name: "5h 滚动", pct: 63, resetAt: Date.now() + 8_000_000 },
+      { kind: "win", key: "window.weekly", short: "周", name: "周用量", pct: 40, resetAt: Date.now() + (2 * 24 + 5) * 3_600_000 },
+      { kind: "win", key: "window.monthly", short: "月", name: "月用量", pct: 80, resetAt: Date.now() + 12 * 86_400_000 },
+    ],
+  });
+  return fixture;
+};
+
+test("watched limits draw one aligned bar per configured window, each with its own countdown", async ({ page }) => {
+  await page.route(/\/api\/dsh-token-quota\/state(?:\?.*)?$/, (r) => r.fulfill({ json: watchedFixture(["window.monthly", "window.weekly"]) }));
+  await page.goto("/");
+  const entry = page.locator("[data-qm-entry]");
+  const bars = entry.locator("[data-qm-bar]");
+  await expect(bars).toHaveCount(2);
+  // 配置顺序 = 排列顺序（月在前），不是按百分比排序
+  await expect(entry.locator(".qm-bar-label")).toHaveText(["月", "周"]);
+  await expect(entry.locator(".qm-bar-pct")).toHaveText(["80%", "40%"]);
+  // 每条倒计时是裸时长，属于自己那条窗口
+  await expect(entry.locator(".qm-bar-reset")).toHaveText([/^12d\d+h$/, /^2d\d+h$/]);
+  // 严格对齐：同一 x、同一宽度、倒计时右缘一致
+  const [first, second] = [await bars.nth(0).boundingBox(), await bars.nth(1).boundingBox()];
+  expect(first.x).toBeCloseTo(second.x, 1);
+  expect(first.width).toBeCloseTo(second.width, 1);
+  const resets = entry.locator(".qm-bar-reset");
+  const [r1, r2] = [await resets.nth(0).boundingBox(), await resets.nth(1).boundingBox()];
+  expect(r1.x + r1.width).toBeCloseTo(r2.x + r2.width, 1);
+  // 卡片第 3 行（今日）已取消；今日用量改在详情弹窗里按供应商展示
+  await expect(entry.locator(".qm-l3")).toHaveCount(0);
+  await entry.click();
+  await page.locator(".qm-pop").getByRole("button", { name: "详情", exact: true }).click();
+  const detail = page.getByRole("dialog", { name: "供应商限额明细", exact: true });
+  await expect(detail.locator('[data-supplier="opencode"] .qm-today-line')).toContainText("1.24M tokens");
+});
+
+test("no watched limits keeps the weekly default, and an empty intersection falls back quietly", async ({ page }) => {
+  await page.route(/\/api\/dsh-token-quota\/state(?:\?.*)?$/, (r) => r.fulfill({ json: watchedFixture([]) }));
+  await page.goto("/");
+  const entry = page.locator("[data-qm-entry]");
+  await expect(entry.locator("[data-qm-bar]")).toHaveCount(1);
+  await expect(entry.locator(".qm-bar-label")).toHaveText("周");
+  await expect(entry.locator("[data-qm-bar]")).toHaveAttribute("data-qm-window", "week");
+  // 配了但当前全都不可用 → 与「没配」同样回落，不报错、不画空条
+  await page.route(/\/api\/dsh-token-quota\/state(?:\?.*)?$/, (r) => r.fulfill({ json: watchedFixture(["gone.key"]) }));
+  await page.reload();
+  await expect(entry.locator("[data-qm-bar]")).toHaveCount(1);
+  await expect(entry.locator(".qm-bar-label")).toHaveText("周");
+});
+
+test("the supplier page lists watchable limits and saves displayKeys in check order", async ({ page }) => {
+  await page.route(/\/api\/dsh-token-quota\/state(?:\?.*)?$/, (r) => r.fulfill({ json: watchedFixture([]) }));
+  await page.goto("/");
+  await page.locator("[data-qm-entry]").click();
+  await page.locator(".qm-pop").getByRole("button", { name: "设置", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "用量监控", exact: true });
+  await dialog.getByRole("tab", { name: "供应商", exact: true }).click();
+  await dialog.locator('.qm-page-row[data-supplier="opencode"]').getByRole("button", { name: "配置", exact: true }).click();
+  const rows = dialog.locator(".qm-watch .w-row");
+  await expect(rows).toHaveCount(3);
+  const saved = page.waitForResponse((r) => r.url().endsWith("/settings") && r.request().method() === "POST");
+  await rows.filter({ hasText: "月用量" }).locator("input[type=checkbox]").check();
+  await rows.filter({ hasText: "周用量" }).locator("input[type=checkbox]").check();
+  await dialog.getByRole("button", { name: "保存", exact: true }).click();
+  expect((await saved).request().postDataJSON().suppliers.opencode.displayKeys).toEqual(["window.monthly", "window.weekly"]);
+});

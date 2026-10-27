@@ -39,7 +39,7 @@ function client(fetch, { storage = new Map(), search = "", clock = null, mobile 
     context.__setNow = (value) => { fixed.Now = value; };
   }
   // 只为纯展示函数提供测试访问点，不修改生产导出或加载方式。
-  vm.runInNewContext(source.replace("exports.apply = apply;", "exports.__test = { buildEntryView, selectPrimaryMetric, supplierStatus, connStateOf, seasonCountdown, seasonSplitText, fmtBig, weeklyEntryOf, selectBarMetric }; exports.apply = apply;"), context);
+  vm.runInNewContext(source.replace("exports.apply = apply;", "exports.__test = { buildEntryView, selectPrimaryMetric, supplierStatus, connStateOf, seasonCountdown, seasonSplitText, fmtBig, weeklyEntryOf, selectBarMetrics }; exports.apply = apply;"), context);
   plugin.apply({ locale: { register(ns, locales_) { Object.assign(locales, locales_); dictionary = locales_.zh; } }, effect(fn) { cleanups.push(fn()); }, slots: {
     inject(name, fn) { return fn(); }, register(descriptor, component) { slots[descriptor.name ?? descriptor.key] = component; },
   } });
@@ -139,13 +139,13 @@ test("expanded sidebar shows the plan name and the weekly bar, and scopes today'
     assert.equal(row.props["data-qm-tone"], "ok");
     assert.equal(row.props.role, "progressbar");
     assert.equal(row.props["aria-valuenow"], 2);
-    assert.match(textOf(tree.root.findByProps({ className: "qm-l2" })), /^周2%$/, "标签是「周」，数字是 2%");
+    assert.match(textOf(tree.root.findByProps({ className: "qm-bars" })), /^周2%下周重置$/, "标签是「周」，数字是 2%，倒计时跟着同一条");
     assert.equal(row.find((n) => /qm-bar-fill/.test(n.props.className || "")).props.style.width, "2%");
-    // 第 3 行：今日用量（3 位有效数字）+ 第 2 行那个窗口自己的重置时间
-    assert.match(line(tree, "qm-l3"), /65\.7M tokens/);
-    assert.match(line(tree, "qm-l3"), /下周重置/);
-    assert.ok(!line(tree, "qm-l3").includes("约 2 小时后重置"), "重置时间必须属于第 2 行那个窗口");
+    // 第 3 行（今日用量）已取消：卡片只留监控项，今日移到详情弹窗按供应商展示
+    assert.equal(tree.root.findAllByProps({ className: "qm-l3" }).length, 0);
     const entry = tree.root.findByProps({ "data-qm-entry": "" });
+    assert.ok(!textOf(entry).includes("tokens"), "卡片正文不再出现今日用量：" + textOf(entry));
+    assert.match(entry.props.title, /65\.7M tokens/, "今日用量仍进无障碍标签/悬停");
     assert.match(entry.props["aria-label"], /当前供应商.*今日.*Token.*本地日/);
     assert.ok(entry.props.title.includes("OpenCode"));
     assert.ok(!entry.props.title.includes(state.active.model), "模型名不再进卡片：" + entry.props.title);
@@ -163,7 +163,8 @@ test("a page with no calls never borrows another page's supplier but retains sco
     assert.equal(barNode(tree), null, "没有在用供应商就不画条");
     assert.ok(!line(tree, "qm-l2").includes("3%"), "不得借用他页供应商的百分比");
     assert.ok(!line(tree, "qm-l1").includes("DeepSeek"));
-    assert.match(line(tree, "qm-l3"), /1\.20K tokens/);
+    // 今日用量不再常显在卡片上，但无障碍标签仍要读得到（1.20K，3 位有效数字）
+    assert.match(tree.root.findByProps({ "data-qm-entry": "" }).props.title, /1\.20K tokens/);
   } finally { await act(async () => tree?.unmount()); }
 });
 
@@ -233,25 +234,26 @@ test("selected primary window owns its reset time and unknown reset does not bor
 test("the card bar prefers the weekly window, then the tightest window, then falls back to text", () => {
   const { helpers, t } = client(async () => response(payload("A")));
   const entry = (name, pct) => ({ kind: "win", name, pct, reset: `${name} 重置` });
+  const bar = (sup) => helpers.selectBarMetrics(sup, t)[0] ?? null;
   // 周窗口优先于更紧的 5 小时窗口：卡片要回答的是「这周的套餐还剩多少」
-  const weekly = helpers.selectBarMetric(supplier([entry("5 小时", 71), entry("周窗口 · GOAT", 12)]), t);
+  const weekly = bar(supplier([entry("5 小时", 71), entry("周窗口 · GOAT", 12)]));
   assert.equal(weekly.weekly, true);
   assert.equal(weekly.label, "周");
   assert.equal(weekly.entry.name, "周窗口 · GOAT");
   assert.equal(weekly.entry.pct, 12);
   assert.equal(weekly.reset, "周窗口 · GOAT 重置", "重置时间必须属于同一个窗口");
   // 没有周窗口 → 最紧的有效窗口，标签用它自己的名字（不冒充「周」）
-  const tightest = helpers.selectBarMetric(supplier([entry("5 小时", 12), entry("月额度 · GOAT", 71)]), t);
+  const tightest = bar(supplier([entry("5 小时", 12), entry("月额度 · GOAT", 71)]));
   assert.equal(tightest.weekly, false);
   assert.equal(tightest.label, "月额度 · GOAT");
   // 周窗口没给百分比 → 不回落到 0%，改报能报数的窗口
-  const missing = helpers.selectBarMetric(supplier([{ kind: "win", name: "Token 用量（周）" }, entry("5 小时", 12)]), t);
+  const missing = bar(supplier([{ kind: "win", name: "Token 用量（周）" }, entry("5 小时", 12)]));
   assert.equal(missing.weekly, false);
   assert.equal(missing.label, "5 小时");
   assert.equal(helpers.weeklyEntryOf([{ kind: "win", name: "Token 用量（周）" }]), null);
-  // 只有余额/报告 → null：调用方回落成文字，绝不画一条 0% 的空条
-  assert.equal(helpers.selectBarMetric(supplier([{ kind: "bal", name: "CNY", remain: "¥41.99" }]), t), null);
-  assert.equal(helpers.selectBarMetric(null, t), null);
+  // 只有余额/报告 → 空数组：调用方回落成文字，绝不画一条 0% 的空条
+  assert.equal(bar(supplier([{ kind: "bal", name: "CNY", remain: "¥41.99" }])), null);
+  assert.equal(bar(null), null);
 });
 
 test("the bar follows the real Command Code shape: the month window is tighter but the week wins", () => {
@@ -262,32 +264,119 @@ test("the bar follows the real Command Code shape: the month window is tighter b
     { kind: "win", name: "周窗口 · GOAT", pct: 31, limit: "$35.00", used: "$10.99", remain: "$24.01", reset: "10月11日 重置" },
     { kind: "win", name: "月额度 · GOAT", pct: 61, limit: "$70.00", used: "$42.62", remain: "$27.38", reset: "10月17日 重置" },
   ], { id: "commandcode", name: "Command Code" });
-  const bar = helpers.selectBarMetric(commandCode, t);
-  assert.equal(bar.entry.name, "周窗口 · GOAT", "月额度更紧也不许顶掉周窗口");
-  assert.equal(bar.entry.pct, 31);
-  assert.equal(bar.label, "周");
-  assert.equal(bar.reset, "10月11日 重置", "重置时间跟着周窗口，不借月额度的");
-  assert.equal(bar.tone, "ok");
+  const weekBar = helpers.selectBarMetrics(commandCode, t)[0];
+  assert.equal(weekBar.entry.name, "周窗口 · GOAT", "月额度更紧也不许顶掉周窗口");
+  assert.equal(weekBar.entry.pct, 31);
+  assert.equal(weekBar.label, "周");
+  assert.equal(weekBar.reset, "10月11日 重置", "重置时间跟着周窗口，不借月额度的");
+  assert.equal(weekBar.tone, "ok");
   // 智谱 Coding Plan 的真实形状：5h 15% / 周 18%，周窗口胜出
   const zai = supplier([
     { kind: "win", name: "Token 用量（5 小时）", pct: 15, reset: "约 3 小时后重置", note: "官方插件字段" },
     { kind: "win", name: "Token 用量（周）", pct: 18, reset: "10月12日 重置", note: "官方插件字段" },
   ], { id: "zai-cn", name: "智谱 Coding Plan" });
-  assert.equal(helpers.selectBarMetric(zai, t).entry.name, "Token 用量（周）");
+  assert.equal(helpers.selectBarMetrics(zai, t)[0].entry.name, "Token 用量（周）");
 });
 
 test("the card bar takes its colour from the supplier thresholds and claims none for stale data", () => {
   const { helpers, t } = client(async () => response(payload("A")));
   const entry = (pct) => ({ kind: "win", name: "周用量", pct });
-  assert.equal(helpers.selectBarMetric(supplier([entry(79)]), t).tone, "ok");
-  assert.equal(helpers.selectBarMetric(supplier([entry(80)]), t).tone, "warn");
-  assert.equal(helpers.selectBarMetric(supplier([entry(94)]), t).tone, "warn");
-  assert.equal(helpers.selectBarMetric(supplier([entry(95)]), t).tone, "crit");
-  assert.equal(helpers.selectBarMetric(supplier([entry(80)], { warnPct: 50, critPct: 70 }), t).tone, "crit", "阈值按供应商生效");
-  assert.equal(helpers.selectBarMetric(supplier([entry(60)], { warnPct: 50, critPct: 70 }), t).tone, "warn");
-  assert.equal(helpers.selectBarMetric(supplier([entry(80)], { state: "err" }), t).tone, "neutral", "旧数据不得继续报警");
-  assert.equal(helpers.selectBarMetric(supplier([entry(80)], { enabled: false }), t).tone, "neutral");
-  assert.equal(helpers.selectBarMetric(supplier([{ kind: "win", name: "周用量", pct: NaN }]), t), null, "未知百分比不画条");
+  const bar = (sup) => helpers.selectBarMetrics(sup, t)[0] ?? null;
+  assert.equal(bar(supplier([entry(79)])).tone, "ok");
+  assert.equal(bar(supplier([entry(80)])).tone, "warn");
+  assert.equal(bar(supplier([entry(94)])).tone, "warn");
+  assert.equal(bar(supplier([entry(95)])).tone, "crit");
+  assert.equal(bar(supplier([entry(80)], { warnPct: 50, critPct: 70 })).tone, "crit", "阈值按供应商生效");
+  assert.equal(bar(supplier([entry(60)], { warnPct: 50, critPct: 70 })).tone, "warn");
+  assert.equal(bar(supplier([entry(80)], { state: "err" })).tone, "neutral", "旧数据不得继续报警");
+  assert.equal(bar(supplier([entry(80)], { enabled: false })).tone, "neutral");
+  assert.equal(bar(supplier([{ kind: "win", name: "周用量", pct: NaN }])), null, "未知百分比不画条");
+});
+
+test("watched limits keep their configured order and fall back to the default rule only on an empty intersection", () => {
+  const { helpers, t } = client(async () => response(payload("A")));
+  const bar = (sup) => helpers.selectBarMetrics(sup, t);
+  const entries = [
+    { kind: "win", key: "window.rolling", short: "5h", name: "5h 滚动", pct: 63, resetAt: Date.now() + 3_600_000 },
+    { kind: "win", key: "window.weekly", short: "周", name: "周用量", pct: 40, resetAt: Date.now() + 40 * 3_600_000 },
+    { kind: "win", key: "window.monthly", short: "月", name: "月用量", pct: 85, resetAt: Date.now() + 200 * 3_600_000 },
+  ];
+  // 配置顺序 = 排列顺序（不是按百分比排序）；每条按自己的百分比分档
+  const watched = bar(supplier(entries, { displayKeys: ["window.monthly", "window.weekly"] }));
+  const keysOf = (bars) => Array.from(bars, (b) => b.entry.key);
+  assert.deepEqual(keysOf(watched), ["window.monthly", "window.weekly"]);
+  assert.deepEqual(Array.from(watched, (b) => b.label), ["月", "周"]);
+  assert.deepEqual(Array.from(watched, (b) => b.tone), ["warn", "ok"]);
+  assert.match(watched[0].reset, /^\d+d\d+h$/, "卡片条上的倒计时是裸时长，不带「后重置」");
+  // 配了但这一项当前没有数据 → 交集自清，只画剩下那条，不报错也不补假条
+  const partial = bar(supplier(entries.slice(0, 2), { displayKeys: ["window.monthly", "window.weekly"] }));
+  assert.deepEqual(keysOf(partial), ["window.weekly"]);
+  // 交集为空 → 默认规则（周优先）；配置值本身不影响回落
+  assert.deepEqual(keysOf(bar(supplier(entries, { displayKeys: ["gone.key"] }))), ["window.weekly"]);
+  // 没有配置 → 默认规则
+  assert.deepEqual(keysOf(bar(supplier(entries))), ["window.weekly"]);
+});
+
+test("the card draws one bar per watched limit with its own countdown and no today row", async () => {
+  const state = payload("OpenCode", [supplier([
+    { kind: "win", key: "window.weekly", short: "周", name: "周用量", pct: 40, resetAt: Date.now() + (2 * 24 + 5) * 3_600_000 + 30 * 60_000 },
+    { kind: "win", key: "window.monthly", short: "月", name: "月用量", pct: 78, resetAt: Date.now() + (12 * 24 + 3) * 3_600_000 + 30 * 60_000 },
+  ], { displayKeys: ["window.monthly", "window.weekly"], todayTokens: 1_240_000 })]);
+  const host = client(async () => response(state));
+  let tree;
+  try {
+    tree = await mount(host);
+    const bars = tree.root.findAllByProps({ "data-qm-bar": "" });
+    assert.equal(bars.length, 2, "两条关注限额各画一条");
+    assert.deepEqual(bars.map((b) => b.props["data-qm-window"]), ["other", "week"]);
+    assert.deepEqual(tree.root.findAllByProps({ className: "qm-bar-label" }).map(textOf), ["月", "周"]);
+    assert.deepEqual(tree.root.findAllByProps({ className: "qm-bar-pct" }).map(textOf), ["78%", "40%"]);
+    // 倒计时跟着各自那条窗口，不互借
+    assert.deepEqual(tree.root.findAllByProps({ className: "qm-bar-reset" }).map(textOf), ["12d3h", "2d5h"]);
+    assert.equal(tree.root.findAllByProps({ className: "qm-l3" }).length, 0, "卡片不再有今日行");
+    // 今日用量搬进详情弹窗的供应商栏
+    await act(async () => tree.root.findByProps({ "data-qm-entry": "" }).props.onClick());
+    await act(async () => button(tree, "详情").props.onClick());
+    assert.match(textOf(tree.root.findByProps({ className: "qm-today-line" })), /今日用量 1\.24M tokens/);
+  } finally { await act(async () => tree?.unmount()); }
+});
+
+test("the supplier page lists watched limits in check order, moves them, and saves displayKeys", async () => {
+  const posts = [];
+  const state = payload("OpenCode", [supplier([
+    { kind: "win", key: "window.5h", short: "5h", name: "5h 滚动", pct: 63 },
+    { kind: "win", key: "window.weekly", short: "周", name: "周用量", pct: 40 },
+    { kind: "win", key: "window.monthly", short: "月", name: "月用量", pct: 78 },
+  ], { displayKeys: [] })]);
+  const host = client(async (url, opts) => {
+    if (opts?.method !== "POST") return response(state);
+    posts.push(JSON.parse(opts.body));
+    return response({ ok: true });
+  });
+  let tree;
+  try {
+    tree = await mount(host, {}, host.Page);
+    await act(async () => tab(tree, "供应商").props.onClick());
+    await act(async () => button(tree, "配置").props.onClick());
+    const rows = () => tree.root.findAll((node) => /^w-row/.test(node.props.className || ""));
+    assert.equal(rows().length, 3);
+    const check = (name, on) => {
+      const row = rows().find((r) => textOf(r).includes(name));
+      return act(async () => row.findByType("input").props.onChange({ target: { checked: on } }));
+    };
+    await check("月用量", true);
+    await check("周用量", true);
+    // 勾选顺序 = 排列顺序：先勾的在前
+    assert.deepEqual(rows().filter((r) => /watched/.test(r.props.className)).map((r) => textOf(r).match(/月用量|周用量|5h 滚动/)[0]),
+      ["月用量", "周用量"]);
+    const up = tree.root.findAllByProps({ className: "w-move" })
+      .flatMap((node) => node.findAllByType("button"))
+      .find((b) => b.props["aria-label"] === "上移" && !b.props.disabled);
+    assert.ok(up, "已勾选且非首位的行要有可用的上移按钮");
+    await act(async () => up.props.onClick());
+    await act(async () => button(tree, "保存").props.onClick());
+    assert.deepEqual(posts[0].suppliers.opencode.displayKeys, ["window.weekly", "window.monthly"]);
+  } finally { await act(async () => tree?.unmount()); }
 });
 
 test("token magnitudes always keep three significant digits", () => {

@@ -3,6 +3,8 @@ node_modules/
 .npm-cache/
 playwright-report/
 test-results/
+# MCP 浏览器工具把快照/日志落在工作区根目录，属于本地产物
+.playwright-mcp/
 .scratch/
 .research-raw/
 *.log

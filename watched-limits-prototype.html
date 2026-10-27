@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>关注限额 · UI 草稿（PROTOTYPE，非产品代码）</title>
+<!--
+  草稿对象：本轮「关注限额」需求的三处界面 ——
+    1. 供应商配置页新增「关注限额」复选列表（勾选顺序 = 卡片排列顺序，↑↓ 调序，
+       灰态 = 上次查询里没有该项；全不勾 = 默认规则：周优先 → 最紧 → 文字）。
+    2. 侧栏卡片第 2 行改为 N 条「真名 · 条 · 百分比 · 裸倒计时」并排；
+       第 3 行（今日 + 单一倒计时）删除，今日用量移入详情弹窗供应商栏名下。
+    3. 详情弹窗供应商栏名下补「今日 N tokens」。
+  样式与类名照抄 lib/client.js 的 qm-*（dsw-alias 变量带回退），成品即此观感。
+  左侧卡片与右侧列表用一段 40 行的 vanilla JS 联动，可实际勾选/调序试手感。
+  浮卡、紧凑行、设置页其余部分本轮不动，未画。
+-->
+<style>
+  :root{
+    --dsw-alias-label-primary:#dbe2ee; --dsw-alias-label-secondary:#a9b2c5; --dsw-alias-label-tertiary:#8b94a8;
+    --dsw-alias-bg-base:#0b0e13; --dsw-alias-bg-layer-2:#151922;
+    --dsw-alias-border-l1:#1d2330; --dsw-alias-border-l2:#363d4d;
+    --dsw-alias-interactive-bg-hover:#20283a;
+    --dsw-alias-state-success-primary:#34d399; --dsw-alias-state-warn-primary:#fbbf24;
+    --dsw-alias-state-error-primary:#f87171; --dsw-alias-state-business-primary:#4f8cff;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{background:var(--dsw-alias-bg-base); color:var(--dsw-alias-label-primary);
+    font:13px/1.5 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    display:flex; flex-direction:column; min-height:100vh;}
+  .topbar{display:flex; align-items:center; gap:10px; padding:8px 14px; background:var(--dsw-alias-bg-layer-2);
+    border-bottom:1px solid var(--dsw-alias-border-l2); color:var(--dsw-alias-label-secondary); font-size:12px;}
+  .topbar b{color:var(--dsw-alias-label-primary);}
+  .topbar .tag{background:#312e81; color:#c7d2fe; padding:1px 8px; border-radius:10px; font-size:11px;}
+  .stage{display:flex; gap:18px; padding:18px; align-items:flex-start; flex-wrap:wrap;}
+  .zone{background:var(--dsw-alias-bg-layer-2); border:1px solid var(--dsw-alias-border-l2); border-radius:10px; padding:12px;}
+  .zone>.ztitle{color:var(--dsw-alias-label-tertiary); font-size:11px; letter-spacing:.08em; margin-bottom:10px;
+    text-transform:uppercase; display:flex; justify-content:space-between; gap:12px;}
+  .zone>.ztitle .note{letter-spacing:0; text-transform:none;}
+
+  /* ---------- 侧栏卡片：照抄 client.js 的 qm-footer / qm-strip ---------- */
+  .card-zone{width:314px; flex:none; display:flex; flex-direction:column; gap:14px;}
+  .qm-footer{position:relative; display:flex; align-items:stretch;
+    border:1px solid var(--dsw-alias-border-l2); border-radius:9px;
+    background:var(--dsw-alias-bg-layer-2); overflow:hidden; font:12px system-ui,sans-serif;}
+  .qm-strip{flex:1; min-width:0; display:flex; flex-direction:column; align-items:stretch; gap:3px;
+    padding:8px; border:0; color:inherit; background:transparent; cursor:pointer; text-align:left; line-height:17px;}
+  .qm-strip:hover{background:var(--dsw-alias-interactive-bg-hover);}
+  .qm-density{position:absolute; right:4px; top:4px; width:26px; height:24px; border:0; border-radius:5px;
+    background:transparent; cursor:pointer; color:var(--dsw-alias-label-secondary);}
+  .qm-l1{display:flex; gap:8px; align-items:center; padding-right:26px;}
+  .qm-plan{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:700;}
+  .qm-l2{display:flex; align-items:center; gap:6px; min-width:0;}
+  /* 多条并排：四列网格，所有行共享列宽 —— label 列与倒计时列同时对齐，
+     倒计时列再垫 min-width 防最短值（4h59m）塌缩；与百分比间隔 = 列距 6px + 4px */
+  .qm-bars{display:grid; grid-template-columns:minmax(0,max-content) minmax(24px,1fr) max-content max-content;
+    column-gap:6px; row-gap:3px; align-items:center; min-width:0;}
+  /* 长度上限用 em 而不是百分比：百分比在 grid 自动轨道里会对尚未确定的轨道尺寸解析，
+     把「月用量」夹成 18px 只剩省略号。em 是绝对长度，列宽才由最长（但受限）的 label 决定。 */
+  .qm-bar-label{max-width:5.5em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    color:var(--dsw-alias-label-secondary);}
+  .qm-bar{flex:1; min-width:24px; height:6px; border-radius:3px; overflow:hidden; background:var(--dsw-alias-border-l1);}
+  .qm-bar-fill{display:block; height:100%; border-radius:3px; background:var(--dsw-alias-label-tertiary);}
+  .qm-bar-fill.ok{background:var(--dsw-alias-state-success-primary);}
+  .qm-bar-fill.warn{background:var(--dsw-alias-state-warn-primary);}
+  .qm-bar-fill.crit{background:var(--dsw-alias-state-error-primary);}
+  .qm-bar-pct{flex:none; font-size:11px; font-variant-numeric:tabular-nums; color:var(--dsw-alias-label-secondary);}
+  /* 新增：裸倒计时（无「后重置」叙述词，靠分隔与颜色弱化；右对齐 + min-width 保证列对齐） */
+  .qm-bar-reset{min-width:36px; margin-left:4px; text-align:right; font-size:10px;
+    font-variant-numeric:tabular-nums; color:var(--dsw-alias-label-tertiary);}
+  .qm-primary{font-weight:600; font-variant-numeric:tabular-nums;}
+  .qm-season{display:flex; align-items:center; gap:5px; font-size:11px; font-variant-numeric:tabular-nums;
+    color:var(--dsw-alias-label-secondary);}
+  .qm-season b{font-weight:600;}
+  .qm-season.valley b{color:var(--dsw-alias-state-success-primary);}
+  .qm-season-dot{width:6px; height:6px; border-radius:50%; flex:none; display:inline-block;}
+  .qm-season-dot.valley{background:var(--dsw-alias-state-success-primary);}
+  .qm-compact-line{display:flex; gap:5px; align-items:center; padding:0 8px 8px 8px; white-space:nowrap; font-size:11px;}
+  .qm-compact-line .qm-provider{min-width:24px; max-width:32%; overflow:hidden; text-overflow:ellipsis; flex:0 1 auto; font-weight:700;}
+  .qm-compact-line .qm-primary{min-width:0; display:flex; gap:3px; align-items:center; flex:1;}
+  .qm-metric-name{min-width:0; overflow:hidden; text-overflow:ellipsis; color:var(--dsw-alias-label-secondary);}
+  .qm-metric-value{flex:none; font-weight:600; font-variant-numeric:tabular-nums;}
+  .card-cap{color:var(--dsw-alias-label-tertiary); font-size:11px; margin-top:-6px; padding:0 2px;}
+  .card-cap b{color:var(--dsw-alias-label-secondary); font-weight:600;}
+
+  /* ---------- 配置页「关注限额」区块 ---------- */
+  .cfg-zone{width:430px; flex:none;}
+  .qm-watch{border:1px solid var(--dsw-alias-border-l2); border-radius:9px; background:var(--dsw-alias-bg-layer-2);
+    font:12px system-ui,sans-serif; padding:10px 10px 6px;}
+  .qm-watch .w-head{display:flex; align-items:baseline; gap:8px; margin-bottom:4px;}
+  .qm-watch .w-head b{font-size:12px;}
+  .qm-watch .w-hint{color:var(--dsw-alias-label-tertiary); font-size:11px;}
+  .w-list{display:flex; flex-direction:column;}
+  .w-row{display:flex; align-items:center; gap:8px; padding:6px 2px; border-bottom:1px solid var(--dsw-alias-border-l1);}
+  .w-row:last-child{border-bottom:none;}
+  .w-row input[type=checkbox]{flex:none; accent-color:var(--dsw-alias-state-business-primary);}
+  .w-name{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .w-row.off .w-name{color:var(--dsw-alias-label-tertiary);}
+  .w-val{flex:none; font-size:11px; font-variant-numeric:tabular-nums; color:var(--dsw-alias-label-secondary);}
+  .w-row.off .w-val{color:var(--dsw-alias-label-tertiary);}
+  .w-order-btns{flex:none; display:flex; gap:2px; visibility:hidden;}
+  .w-row.checked .w-order-btns{visibility:visible;}
+  .w-order-btns button{width:20px; height:20px; border:1px solid var(--dsw-alias-border-l2); border-radius:5px;
+    background:transparent; color:var(--dsw-alias-label-secondary); cursor:pointer; font-size:10px; line-height:1;}
+  .w-order-btns button:hover{color:var(--dsw-alias-label-primary); border-color:var(--dsw-alias-state-business-primary);}
+  .w-foot{color:var(--dsw-alias-label-tertiary); font-size:11px; padding:6px 2px 2px;}
+  .cfg-ctx{color:var(--dsw-alias-label-tertiary); font-size:11px; margin-top:8px;}
+
+  /* ---------- 详情弹窗供应商栏（仅画 OpenCode 一栏） ---------- */
+  .det-zone{flex:1; min-width:300px;}
+  .qm-col{border:1px solid var(--dsw-alias-border-l1); border-radius:9px; padding:10px; font:12px system-ui,sans-serif;}
+  .qm-col h5{display:flex; justify-content:space-between; align-items:center; font-size:13px; margin-bottom:2px;}
+  .qm-cur{color:var(--dsw-alias-state-business-primary); font-size:11px;}
+  .qm-today-line{color:var(--dsw-alias-label-secondary); font-size:11px; font-variant-numeric:tabular-nums; margin-bottom:8px;}
+  .qm-today-line b{color:var(--dsw-alias-label-primary); font-weight:600;}
+  .qm-pill{font-size:11px; color:var(--dsw-alias-state-success-primary);}
+  .qm-card-item{padding:8px 2px; border-bottom:1px solid var(--dsw-alias-border-l1);}
+  .qm-card-item:last-child{border-bottom:none;}
+  .qm-card-item .ci-name{color:var(--dsw-alias-label-secondary); font-size:11px; display:flex; justify-content:space-between;}
+  .qm-card-item .ci-big{font-weight:700; font-size:14px; margin:2px 0;}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <b>关注限额 · UI 草稿</b><span class="tag">PROTOTYPE · 非产品代码</span>
+  <span>右侧列表勾选/调序，左侧卡片 A 实时联动</span>
+</div>
+<div class="stage">
+
+  <!-- ================= 1. 侧栏卡片的三种形态 ================= -->
+  <div class="zone card-zone">
+    <div class="ztitle">侧栏卡片 <span class="note">第 3 行已删除；季节行保留</span></div>
+
+    <div>
+    <div class="qm-footer" id="cardA">
+      <button class="qm-strip" type="button">
+        <div class="qm-l1"><b class="qm-plan">OpenCode</b></div>
+        <!-- 条行动态渲染（JS 联动配置列表） -->
+        <div class="qm-season valley"><span class="qm-season-dot valley"></span><b>谷价</b><span>· 1d17h 后切换</span></div>
+      </button>
+      <button class="qm-density" type="button" title="收起">▾</button>
+    </div>
+    <p class="card-cap"><b>A 配置态</b>：关注限额交集的多条并排（配置顺序 = 排列顺序，倒计时裸时长）</p>
+    </div>
+
+    <div>
+    <div class="qm-footer">
+      <button class="qm-strip" type="button">
+        <div class="qm-l1"><b class="qm-plan">OpenCode</b></div>
+        <div class="qm-bars">
+          <span class="qm-bar-label" title="周用量">周</span>
+          <span class="qm-bar"><i class="qm-bar-fill ok" style="width:40%"></i></span>
+          <span class="qm-bar-pct">40%</span>
+          <span class="qm-bar-reset">2d5h</span>
+        </div>
+        <div class="qm-season valley"><span class="qm-season-dot valley"></span><b>谷价</b><span>· 1d17h 后切换</span></div>
+      </button>
+      <button class="qm-density" type="button" title="收起">▾</button>
+    </div>
+    <p class="card-cap"><b>B 默认态</b>：全不勾 / 交集为空 → 周优先 → 最紧（现行规则，唯一变化是倒计时改裸时长）</p>
+    </div>
+
+    <div>
+    <div class="qm-footer">
+      <button class="qm-strip" type="button">
+        <div class="qm-l1"><b class="qm-plan">DeepSeek</b></div>
+        <div class="qm-l2"><span class="qm-primary" title="USD">USD $3.20</span></div>
+        <div class="qm-season valley"><span class="qm-season-dot valley"></span><b>谷价</b><span>· 1d17h 后切换</span></div>
+      </button>
+      <button class="qm-density" type="button" title="收起">▾</button>
+    </div>
+    <p class="card-cap"><b>C 文字回落</b>：纯余额/费用供应商不画条（不变）</p>
+    </div>
+
+    <div>
+    <div class="qm-footer">
+      <div class="qm-compact-line">
+        <span class="qm-provider">OpenCode</span>
+        <span class="qm-primary"><span class="qm-metric-name">月用量</span><span class="qm-metric-value">34%</span></span>
+      </div>
+    </div>
+    <p class="card-cap"><b>D 紧凑态</b>：主指标文字（最紧有效窗口），本轮不动</p>
+    </div>
+  </div>
+
+  <!-- ================= 2. 配置页「关注限额」区块 ================= -->
+  <div class="zone cfg-zone">
+    <div class="ztitle">供应商配置页 · 新区块 <span class="note">位于阈值字段之后</span></div>
+    <div class="qm-watch">
+      <div class="w-head"><b>关注限额</b><span class="w-hint">勾选顺序 = 卡片进度条排列顺序</span></div>
+      <div class="w-list" id="watchList"><!-- JS 渲染 --></div>
+      <div class="w-foot" id="watchFoot"></div>
+    </div>
+    <p class="cfg-ctx">目录来自 provider 静态声明（未查询也可配）；「当前值」来自上次成功查询，
+      查询里没有的行灰态标注「当前不可用」但仍可勾选——勾了只在没有数据时暂时不显示，数据回来自动出现。</p>
+    <p class="cfg-ctx">纯余额供应商（无可画条目）整个区块隐藏，不留说明文案。</p>
+  </div>
+
+  <!-- ================= 3. 详情弹窗供应商栏（今日的新家） ================= -->
+  <div class="zone det-zone">
+    <div class="ztitle">详情弹窗 · 供应商栏 <span class="note">仅画 OpenCode 一栏</span></div>
+    <div class="qm-col">
+      <h5><span>OpenCode <span class="qm-cur">· 当前</span></span><span class="qm-pill">正常</span></h5>
+      <div class="qm-today-line">今日 <b>1.32M</b> tokens</div>
+      <div class="qm-card-item"><div class="ci-name"><span>5h 滚动</span><span>4h59m 后重置</span></div><div class="ci-big">63%</div></div>
+      <div class="qm-card-item"><div class="ci-name"><span>周用量</span><span>2d5h 后重置</span></div><div class="ci-big">78%</div></div>
+      <div class="qm-card-item"><div class="ci-name"><span>月用量</span><span>12d3h 后重置</span></div><div class="ci-big">34%</div></div>
+    </div>
+    <p class="cfg-ctx">卡片第 3 行的今日用量移到这里（各供应商自己的 todayTokens，比卡片上的跨供应商合计更准）；
+      条目全量列表与完整倒计时措辞不变。</p>
+  </div>
+
+</div>
+
+<script>
+// ---------- 假数据：目录（静态） × 当前值（上次成功查询） ----------
+const CATALOG = [
+  { key: "usage.rolling",  name: "5h 滚动", short: "5h", pct: 63, tone: "ok", reset: "4h59m" },
+  { key: "usage.weekly",   name: "周用量", short: "周", pct: 78, tone: "warn", reset: "2d5h" },
+  { key: "usage.monthly",  name: "月用量", short: "月", pct: 34, tone: "ok", reset: "12d3h" },
+  { key: "allowance.auto", name: "allowance · auto", short: "allowance", pct: null, off: true },  // 未配 token → 查询里没有
+];
+let selected = ["usage.monthly", "usage.weekly"];   // 有序：配置顺序
+
+const list = document.getElementById("watchList");
+const foot = document.getElementById("watchFoot");
+const stripA = document.querySelector("#cardA .qm-strip");
+const seasonA = document.querySelector("#cardA .qm-season");
+
+function renderList() {
+  list.innerHTML = "";
+  const rows = [
+    ...selected.map((k, i) => ({ ...CATALOG.find(c => c.key === k), checked: true, ord: i + 1 })),
+    ...CATALOG.filter(c => !selected.includes(c.key)).map(c => ({ ...c, checked: false })),
+  ];
+  for (const row of rows) {
+    const div = document.createElement("div");
+    div.className = "w-row" + (row.checked ? " checked" : "") + (row.off ? " off" : "");
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = row.checked;
+    cb.onchange = () => { selected = row.checked ? selected.filter(k => k !== row.key) : [...selected, row.key]; render(); };
+    div.append(
+      cb,
+      Object.assign(document.createElement("span"), { className: "w-name", textContent: row.name }),
+      Object.assign(document.createElement("span"), { className: "w-val", textContent: row.off ? "当前不可用" : (row.pct + "%") }),
+    );
+    const btns = document.createElement("span"); btns.className = "w-order-btns";
+    for (const [label, delta] of [["↑", -1], ["↓", 1]]) {
+      const b = document.createElement("button"); b.type = "button"; b.textContent = label;
+      b.disabled = row.ord === 1 && delta === -1 || row.ord === selected.length && delta === 1;
+      b.onclick = () => { const i = selected.indexOf(row.key);
+        [selected[i], selected[i + delta]] = [selected[i + delta], selected[i]]; render(); };
+      btns.append(b);
+    }
+    div.append(btns); list.append(div);
+  }
+  foot.textContent = selected.length ? "" : "全不勾 = 默认规则：周窗口优先，缺周窗口取最紧的有效窗口。";
+}
+
+function renderCard() {
+  stripA.querySelectorAll(".qm-l2,.qm-bars").forEach(n => n.remove());
+  const entries = selected.map(k => CATALOG.find(c => c.key === k)).filter(e => e && e.pct !== null);
+  if (!entries.length) {  // 空交集 → 文字回落
+    const t = document.createElement("div"); t.className = "qm-l2";
+    const s = document.createElement("span"); s.className = "qm-primary"; s.textContent = "月用量 34%";
+    t.append(s); stripA.insertBefore(t, seasonA);
+    return;
+  }
+  stripA.insertBefore(barsFor(entries), seasonA);
+}
+function barsFor(entries) {
+  const grid = document.createElement("div"); grid.className = "qm-bars";
+  for (const e of entries) {
+    const label = document.createElement("span"); label.className = "qm-bar-label"; label.title = e.name; label.textContent = e.short || e.name;
+    const bar = document.createElement("span"); bar.className = "qm-bar";
+    const fill = document.createElement("i"); fill.className = "qm-bar-fill " + e.tone; fill.style.width = e.pct + "%";
+    bar.append(fill);
+    const pct = document.createElement("span"); pct.className = "qm-bar-pct"; pct.textContent = e.pct + "%";
+    const reset = document.createElement("span"); reset.className = "qm-bar-reset"; reset.textContent = e.reset;
+    grid.append(label, bar, pct, reset);
+  }
+  return grid;
+}
+function render() { renderList(); renderCard(); }
+render();
+</script>
+</body>
+</html>
