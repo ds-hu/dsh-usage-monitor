@@ -7,7 +7,7 @@ import { create, act } from "react-test-renderer";
 
 const source = readFileSync(new URL("../lib/client.js", import.meta.url), "utf8");
 /** 使用实际无构建客户端与真实 React，仅替换宿主槽位、网络、时钟和本地存储。 */
-function client(fetch, { storage = new Map(), search = "", clock = null } = {}) {
+function client(fetch, { storage = new Map(), search = "", clock = null, mobile = false } = {}) {
   let plugin, dictionary;
   const locales = {};
   const slots = {}, timers = [], listeners = {}, cleanups = [];
@@ -18,6 +18,9 @@ function client(fetch, { storage = new Map(), search = "", clock = null } = {}) 
     __ModuleLoader__: { load({ factory }) { plugin = factory((id) => id === "react" ? React : { createPortal: (child) => child }); } },
     location: { search }, addEventListener: subscribe, removeEventListener: unsubscribe,
     localStorage: { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
+    // 视口断点替身：mobile 决定 matchMedia 的结果，宿主浏览器才有真实实现。
+    matchMedia: (query) => ({ matches: mobile, media: query,
+      addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }),
   };
   const context = {
     window, document, fetch, console, location: window.location, AbortController, AbortSignal,
@@ -79,6 +82,21 @@ for (const wide of [true, false]) test(`${wide ? "expanded" : "rail"} sidebar op
     assert.equal(tree.root.findByProps({ role: "dialog" }).props["aria-label"], "供应商限额明细");
     await act(async () => button(tree, "关闭").props.onClick());
     assert.equal(tree.root.findAllByProps({ role: "dialog" }).length, 0);
+  } finally { await act(async () => tree?.unmount()); }
+});
+
+for (const wide of [true, false]) test(`mobile layout (${wide ? "expanded" : "rail"}) opens the details dialog on the first tap`, async () => {
+  const host = client(async () => response(payload("A")), { mobile: true });
+  let tree;
+  try {
+    tree = await mount(host, { wide });
+    await open(tree);
+    assert.equal(tree.root.findAllByProps({ className: "qm-pop" }).length, 0, "手机端不再先弹浮卡");
+    assert.equal(tree.root.findByProps({ role: "dialog" }).props["aria-label"], "供应商限额明细");
+    assert.equal(tree.root.findByProps({ "data-qm-entry": "" }).props["aria-expanded"], true);
+    // 详情头部保留「设置」：直达详情不是死路，配置面板仍能打开。
+    await act(async () => button(tree, "设置").props.onClick());
+    assert.equal(tree.root.findByProps({ role: "dialog" }).props["aria-label"], "用量监控");
   } finally { await act(async () => tree?.unmount()); }
 });
 

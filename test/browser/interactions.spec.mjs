@@ -297,6 +297,22 @@ test("usage popover toggles, dismisses without a backdrop, and fits resized view
   await expect(entry).toBeFocused();
 });
 
+test("the host's narrow layout opens details on the first tap; the wide layout keeps the popover", async ({ page }) => {
+  await useDisplayFixture(page);
+  await page.setViewportSize({ width: 900, height: 700 });
+  await page.goto("/?rail");
+  await page.locator("[data-qm-entry]").click();
+  await expect(page.locator(".qm-pop")).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "供应商限额明细", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await page.setViewportSize({ width: 1180, height: 800 });
+  await page.reload();
+  await page.locator("[data-qm-entry]").click();
+  await expect(page.locator(".qm-pop")).toHaveCount(1);
+  await expect(page.getByRole("dialog", { name: "用量", exact: true })).toBeVisible();
+});
+
 test("A3 dialog traps focus, preserves organization and retains a rejected draft", async ({ page }) => {
   await page.goto("/");
   const opener = page.locator("[data-qm-entry]");
@@ -337,9 +353,10 @@ for (const light of [false, true]) {
     await page.goto(`/?rail${light ? "&light" : ""}`);
     const opener = page.locator("[data-qm-entry]");
     await opener.click();
-    await page.locator(".qm-pop").getByRole("button", { name: "详情", exact: true }).click();
+    await expect(page.locator(".qm-pop")).toHaveCount(0);
     const dialog = page.getByRole("dialog", { name: "供应商限额明细", exact: true });
     await expect(dialog).toBeVisible();
+    await expect(opener).toHaveAttribute("aria-expanded", "true");
     await expect(dialog.locator('[data-metric-kind="balance"]')).toHaveCount(2);
     const box = await dialog.boundingBox();
     expect(box.x).toBeGreaterThanOrEqual(0);
