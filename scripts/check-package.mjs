@@ -27,7 +27,10 @@ for (const required of [pkg.main, pkg.exports["./client"], pkg.dsh.bundle.patch,
   "lib/routes.js", "lib/storage.js", "lib/scheduler.js", "lib/usage.js", "lib/detect.js",
   "lib/providers.js", "lib/scan-coordinator.js", "lib/legacy-config.js",
   // 峰谷时段判定：缺失会让安装版在 require 阶段直接抛 ERR_MODULE_NOT_FOUND
-  "lib/season.js", "README.md", "CHANGELOG.md"]) {
+  "lib/season.js",
+  // 额度历史：统计页的剩余额度折线依赖它，漏打包会让 /state?quota=1 直接 500
+  "lib/quota-history.js",
+  "README.md", "CHANGELOG.md"]) {
   assert.ok(paths.has(required.replace(/^\.\//, "")), `产物缺少 ${required}`);
 }
 // Plugins 面板的标题与图标同样要进产物并能经 ESM 解析器取到：

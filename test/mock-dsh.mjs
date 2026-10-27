@@ -255,6 +255,12 @@ const cc2 = s4.payload.suppliers.find((s) => s.id === "commandcode");
 assert.equal(cc2.current, true, "真实 DSH 载荷应驱动 commandcode 进入当前集（而非流量兜底）");
 assert.equal(s4.payload.trafficStale, false, "观测到真实流量后不得再标 近24h无流量");
 assert.equal(cc2.todayTokens, 400, "同一 step 的 usage 应替换而非重复累加（265→360，再 +40 = 400）");
+assert.deepEqual(cc2.todayUsage, {
+  inputTokens: 340, outputTokens: 60, cacheReadTokens: 0, cacheWriteTokens: 0, unsplitTokens: 0,
+}, "最终样本替换时连旧的缓存分量一起扣掉，只留新的分布");
+assert.equal(cc2.usageDays.length, 7, "默认保留期 7 天 → 历史给满 7 行");
+assert.equal(cc2.usageDays.at(-1).total, 400, "历史最后一行（今天）与今日总量同源");
+assert.equal(s4.payload.poll.usageHistoryDays, 7, "历史窗口随载荷下发");
 assert.equal(s4.payload.traffic.scheme, 2, "state 应带流量诊断标记（scheme=2）");
 const ccRoute = s4.payload.traffic.routes.find((r) => r.route === "commandcode-goat");
 assert.ok(ccRoute && ccRoute.supplier === "commandcode", "诊断 routes 应反映 commandcode-goat → commandcode");
@@ -269,10 +275,11 @@ const usageFile = usageFilePath(TEST_HOME);
 const onDisk = loadUsageFile(usageFile);
 assert.ok(onDisk.commandcode, "commandcode 应有落盘小时桶");
 const hour = hourKeyOf();
-assert.equal(onDisk.commandcode[hour], 400, "落盘小时桶应等于折叠后的当日数值（含替换语义）");
-assert.equal(onDisk.deepseek[hour], 1500, "legacy 载荷的 deepseek 也应落盘");
+assert.deepEqual(onDisk.commandcode[hour], { inputTokens: 340, outputTokens: 60 },
+  "落盘按分量保存，且等于折叠后的当日数值（含替换语义）");
+assert.deepEqual(onDisk.deepseek[hour], { inputTokens: 1000, outputTokens: 500 }, "legacy 载荷的 deepseek 也应落盘");
 assert.equal(s4.payload.poll.retentionDays, 7, "默认保留期应为 7 天");
-console.log(`✓ 本地用量数据落盘：${usageFile}（commandcode=400，deepseek=1500，载入回读一致）`);
+console.log(`✓ 本地用量数据落盘：${usageFile}（commandcode 分量 340/60，deepseek 1000/500，载入回读一致）`);
 
 // ---- 用户显式关闭后不被自动探测再次启用（用自动接入的 opencode 验证） ----
 await call("/api/dsh-token-quota/settings", { suppliers: { opencode: { enabled: false } } });

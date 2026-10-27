@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { apply, Config } from "../lib/index.js";
 import { createCtx } from "./harness.mjs";
-import { loadUsageFile, usageFilePath } from "../lib/storage.js";
+import { loadUsageFile, totalOf, usageFilePath } from "../lib/storage.js";
 
 const NS = "dsh-token-quota";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -65,7 +65,8 @@ writes.length = 0;
 emit(session, sample(120));
 await sleep(2600); // 越过 2s 防抖 + 冲刷
 assert.equal(writes.length, 2, `首个样本应恰好保存一次（tmp 写 + rename），实际 ${writes.length}`);
-assert.deepEqual(loadUsageFile(usageFile).deepseek, { [Object.keys(loadUsageFile(usageFile).deepseek)[0]]: 120 });
+assert.deepEqual(loadUsageFile(usageFile).deepseek, { [Object.keys(loadUsageFile(usageFile).deepseek)[0]]: { inputTokens: 120 } },
+  "落盘按分量保存，120 只记在未缓存输入上");
 const afterFirst = JSON.stringify(loadUsageFile(usageFile));
 const firstMtime = fs.statSync(usageFile).mtimeMs;
 
@@ -76,11 +77,15 @@ assert.equal(writes.length, 2, `相同样本重复 300 次后不得再写盘（�
 assert.equal(JSON.stringify(loadUsageFile(usageFile)), afterFirst, "文件内容必须逐字节不变");
 assert.equal(fs.statSync(usageFile).mtimeMs, firstMtime, "文件不得被重新写入（mtime 不变）");
 
-// ---- 真正的新增仍然保存 ----
-emit(session, { type: "assistant/chunk", data: { provider: "deepseek-official", turn: 1, step: 2, chunk: { type: "usage", usage: { inputTokens: 30 } } } });
+// ---- 真正的新增仍然保存（分量各自落盘） ----
+emit(session, { type: "assistant/chunk", data: { provider: "deepseek-official", turn: 1, step: 2,
+  chunk: { type: "usage", usage: { inputTokens: 30, outputTokens: 2, cacheReadTokens: 5 } } } });
 await sleep(2600);
 assert.equal(writes.length, 4, "新 step 必须触发一次保存");
-assert.equal(Object.values(loadUsageFile(usageFile).deepseek).reduce((a, b) => a + b, 0), 150, "总数 = 120 + 30");
+const saved = loadUsageFile(usageFile).deepseek;
+assert.deepEqual(Object.values(saved).reduce((sum, bucket) => sum + totalOf(bucket), 0), 157, "总数 = 120 + 30 + 2 + 5");
+assert.deepEqual(Object.values(saved)[0],
+  { inputTokens: 150, outputTokens: 2, cacheReadTokens: 5 }, "同一小时的各分量分别累加，缓存命中与输出没有被并进输入");
 
 // ---- 保留期变化：宿主写入行 config → volatile 引用更新 → setRetention → dirty 独立生效 ----
 // 走真实宿主路径：settings.update 改的正是 apply 收到的那个引用（loader 就地提交后发

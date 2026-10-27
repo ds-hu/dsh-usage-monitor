@@ -39,7 +39,7 @@ function client(fetch, { storage = new Map(), search = "", clock = null, mobile 
     context.__setNow = (value) => { fixed.Now = value; };
   }
   // 只为纯展示函数提供测试访问点，不修改生产导出或加载方式。
-  vm.runInNewContext(source.replace("exports.apply = apply;", "exports.__test = { buildEntryView, selectPrimaryMetric, supplierStatus, connStateOf, seasonCountdown, seasonSplitText, fmtBig, weeklyEntryOf, selectBarMetrics }; exports.apply = apply;"), context);
+  vm.runInNewContext(source.replace("exports.apply = apply;", "exports.__test = { buildEntryView, selectPrimaryMetric, supplierStatus, connStateOf, seasonCountdown, seasonSplitText, fmtBig, weeklyEntryOf, selectBarMetrics, usageRatioOf, ratioPartsOf, splitPartsOf, chartDomainOf, quotaSegmentsOf, quotaLegendOf, dayStartOf }; exports.apply = apply;"), context);
   plugin.apply({ locale: { register(ns, locales_) { Object.assign(locales, locales_); dictionary = locales_.zh; } }, effect(fn) { cleanups.push(fn()); }, slots: {
     inject(name, fn) { return fn(); }, register(descriptor, component) { slots[descriptor.name ?? descriptor.key] = component; },
   } });
@@ -131,8 +131,10 @@ test("expanded sidebar shows the plan name and the weekly bar, and scopes today'
   let tree;
   try {
     tree = await mount(host);
-    // 第 1 行是 plan 名：插件标题、连接圆点与模型名都不再进卡片
-    assert.equal(line(tree, "qm-l1"), "OpenCode");
+    // 标题行（进统计的入口）左侧是 plan 名：插件标题、连接圆点与模型名都不进卡片
+    assert.equal(textOf(tree.root.findByProps({ className: "qm-plan" })), "OpenCode");
+    // 右侧是同一名供应商的今日数；今日数挂在标题行，不再与监控条挤一行
+    assert.equal(textOf(tree.root.findByProps({ className: "qm-today-chip" })), "今日 64.4M");
     // 第 2 行是周窗口（2%），而不是更紧的 5 小时窗口（5%）
     const row = barNode(tree);
     assert.equal(row.props["data-qm-window"], "week");
@@ -340,6 +342,197 @@ test("the card draws one bar per watched limit with its own countdown and no tod
     assert.match(textOf(tree.root.findByProps({ className: "qm-today-line" })), /今日用量 1\.24M tokens/);
   } finally { await act(async () => tree?.unmount()); }
 });
+
+test("the ratio normalizes to cache misses and refuses to invent one from nothing", async () => {
+  const host = client(async () => response(payload("A")));
+  const { usageRatioOf, ratioPartsOf, splitPartsOf } = host.helpers;
+  // 30 倍命中、0.15 倍输出：归一到未命中 = 1；每段都是 3 位有效数字（与卡片量级同口径）
+  const ratio = usageRatioOf({ cacheReadTokens: 3_000_000, inputTokens: 100_000, outputTokens: 15_000 });
+  assert.equal(ratio.text, "30.0 : 1.00 : 0.150");
+  assert.equal(ratio.miss, "1.00");
+  // 未命中为 0 时改按最大分量归一（不除零），未命中那段如实显示 0.00
+  assert.equal(usageRatioOf({ cacheReadTokens: 1_000, inputTokens: 0, outputTokens: 10 }).text, "1.00 : 0.00 : 0.0100");
+  // 三分量全 0、或只有未细分（旧版合并数据）→ null：没有分量就不编比例
+  assert.equal(usageRatioOf({ inputTokens: 0 }), null);
+  assert.equal(usageRatioOf({ unsplitTokens: 500 }), null);
+  // 小于显示精度的段落显式给 <0.0001，不四舍五入成 0
+  assert.equal(usageRatioOf({ cacheReadTokens: 1, inputTokens: 1_000_000, outputTokens: 1 }).text, "<0.0001 : 1.00 : <0.0001");
+  // 详情行的分布条只取三分量；统计页取全部五分量；零分量都不出现
+  //（返回数组来自 vm realm，按字符串比较，避免跨 realm 的原型差异）
+  const usage = { cacheReadTokens: 30, inputTokens: 10, outputTokens: 5, cacheWriteTokens: 99, unsplitTokens: 7 };
+  assert.equal(ratioPartsOf(usage).map((part) => part.cls).join(","), "hit,miss,out");
+  assert.equal(splitPartsOf(usage).map((part) => part.cls).join(","), "hit,miss,out,write,unsplit");
+  await act(async () => {});
+});
+
+test("details show the colored ratio next to today's total, and only when components exist", async () => {
+  const state = payload("OpenCode", [supplier([{ name: "周用量", kind: "win", pct: 2 }], {
+    todayTokens: 3_155_000,
+    todayUsage: { inputTokens: 100_000, outputTokens: 15_000, cacheReadTokens: 3_000_000, cacheWriteTokens: 40_000, unsplitTokens: 0 },
+  })]);
+  const host = client(async () => response(state));
+  let tree;
+  try {
+    tree = await mount(host);
+    await open(tree);
+    await act(async () => button(tree, "详情").props.onClick());
+    const line = tree.root.findByProps({ className: "qm-today-line" });
+    assert.match(textOf(line), /今日用量 3\.15M tokens/, "总量仍按供应商口径");
+    assert.match(textOf(line), /30\.0 : 1\.00 : 0\.150/, "比例挨着总量：命中 : 未命中 : 输出，未命中 = 1");
+    // 三个数字分别着段色，与三段分布条一一对应
+    const ratio = line.findByProps({ className: "qm-ratio" });
+    assert.deepEqual(ratio.findAllByType("b").map((node) => node.props.className), ["r-hit", "r-miss", "r-out"]);
+    assert.equal(line.findAllByProps({ className: "qm-split-bar" }).length, 1);
+    await act(async () => tree.unmount()); tree = null;
+
+    // 旧载荷没有 todayUsage：只显示总量，不画空条、不编比例
+    const legacy = client(async () => response(payload("OpenCode", [supplier([{ name: "周用量", kind: "win", pct: 2 }], { todayTokens: 500 })])));
+    tree = await mount(legacy);
+    await open(tree);
+    await act(async () => button(tree, "详情").props.onClick());
+    const bare = tree.root.findByProps({ className: "qm-today-line" });
+    assert.match(textOf(bare), /今日用量 500 tokens/);
+    assert.equal(bare.findAllByProps({ className: "qm-split-bar" }).length, 0);
+    assert.equal(bare.findAllByProps({ className: "qm-ratio" }).length, 0);
+  } finally { await act(async () => tree?.unmount()); }
+});
+
+test("the card head opens the statistics view with the ratio, legend and one combined chart", async () => {
+  const start = (day) => new Date(...day.split("-").map((part, i) => (i === 1 ? Number(part) - 1 : Number(part)))).getTime();
+  const usageDays = [
+    { day: "2026-10-21", inputTokens: 50_000, outputTokens: 8_000, cacheReadTokens: 1_000_000, cacheWriteTokens: 10_000, unsplitTokens: 0, total: 1_068_000 },
+    { day: "2026-10-22", inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, unsplitTokens: 0, total: 0 },
+    { day: "2026-10-23", inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, unsplitTokens: 0, total: 0 },
+    { day: "2026-10-24", inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, unsplitTokens: 0, total: 0 },
+    { day: "2026-10-25", inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, unsplitTokens: 0, total: 0 },
+    { day: "2026-10-26", inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, unsplitTokens: 0, total: 0 },
+    { day: "2026-10-27", inputTokens: 100_000, outputTokens: 15_000, cacheReadTokens: 3_000_000, cacheWriteTokens: 40_000, unsplitTokens: 0, total: 3_155_000 },
+  ];
+  // 5h 窗口在 10-26 用满后重置（pct 90 → 8），周窗口一路缓升
+  const quotaHistory = {
+    "window.5h": [[start("2026-10-25"), 30], [start("2026-10-26"), 90], [start("2026-10-26") + 3_600_000, 8], [start("2026-10-27"), 62]],
+    "window.weekly": [[start("2026-10-21"), 0], [start("2026-10-27") + 3_600_000, 20]],
+  };
+  const state = payload("OpenCode", [
+    supplier([{ name: "5h 滚动", key: "window.5h", short: "5h", kind: "win", pct: 62 },
+      { name: "周用量", key: "window.weekly", short: "周", kind: "win", pct: 20 }], {
+      todayTokens: 3_155_000,
+      todayUsage: { inputTokens: 100_000, outputTokens: 15_000, cacheReadTokens: 3_000_000, cacheWriteTokens: 40_000, unsplitTokens: 0 },
+      usageDays,
+      quotaHistory,
+    }),
+  ]);
+  state.poll = { intervalSeconds: 60, retentionDays: 7, usageHistoryDays: 7, quotaHistoryDays: 7 };
+  const host = client(async () => response(state));
+  let tree;
+  try {
+    tree = await mount(host);
+    // 标题行 = 名字 + 今日数，点击进入统计
+    const head = tree.root.findByProps({ "data-qm-stats-entry": "" });
+    assert.match(textOf(head), /OpenCode/);
+    assert.match(textOf(head), /今日 3\.15M/);
+    assert.equal(head.props["aria-haspopup"], "dialog");
+    await act(async () => head.props.onClick());
+    await flush();
+    const dialog = tree.root.findByProps({ role: "dialog", "aria-modal": true });
+    assert.equal(dialog.props["aria-label"], "用量统计");
+    assert.equal(head.props["aria-expanded"], true);
+    // 今日比例与窗口比例分开：今日 30.0:1.00:0.150，近 7 天合计 26.7:1.00:0.153
+    assert.match(textOf(tree.root.findByProps({ className: "qm-stats-ratio" })), /30\.0 : 1\.00 : 0\.150/);
+    assert.match(textOf(tree.root.findByProps({ className: "qm-stats-foot" })), /近 7 天 4\.22M/);
+    assert.match(textOf(tree.root.findByProps({ className: "qm-stats-foot" })), /26\.7 : 1\.00 : 0\.153/);
+    // 图例逐分量给数（未细分为 0 不出现）
+    const legend = textOf(tree.root.findByProps({ className: "qm-stats-legend" }));
+    assert.match(legend, /缓存命中 3\.00M/);
+    assert.match(legend, /缓存未命中 100K/);
+    assert.match(legend, /输出 15\.0K/);
+    assert.match(legend, /缓存写入 40\.0K/);
+
+    // 一张图：柱 = 每日 token（左轴顶端刻度 = 最高的那根柱），线 = 剩余额度
+    const caption = textOf(tree.root.findByProps({ className: "qm-chart-cap" }));
+    assert.match(caption, /3\.15M token/, "左轴顶端是最高柱值，不是窗口合计");
+    // 日期刻度每天一个：柱在哪天一眼可见（含没有消耗的日子，时间轴才是连续的）
+    const ticks = tree.root.findByProps({ className: "qm-chart-ticks" });
+    assert.equal(ticks.findAllByProps({ className: "qm-chart-tick" }).length, 7);
+    assert.equal(ticks.findAllByProps({ className: "qm-chart-tick" }).map(textOf).join(","),
+      "10-21,10-22,10-23,10-24,10-25,10-26,10-27");
+    const plot = tree.root.findByProps({ "data-qm-chart": "opencode" });
+    const bars = plot.findAll((node) => node.type === "rect" && node.props.className === "qm-chart-bar");
+    assert.equal(bars.length, 2, "只有两天有消耗，就只画两根柱");
+    // 5h 用满后重置 → 两段折线（不把两次窗口连成一条斜线）；周窗口一段
+    const lines = plot.findAll((node) => node.props.className === "qm-chart-line");
+    const polylines = lines.filter((node) => node.type === "polyline");
+    const dots = lines.filter((node) => node.type === "circle");
+    assert.equal(polylines.length, 3, "5h 两段 + 周一段");
+    assert.equal(dots.length, 0, "每段至少两点，无需单点圆点");
+    // 剩余额度 = 100 − 已用：5h 当前 38%，周 80%
+    const keys = tree.root.findAllByProps({ className: "qm-chart-key" }).map(textOf);
+    assert.deepEqual(keys, ["5h 剩余 38%", "周 剩余 80%"]);
+    // 折线纵坐标必须落在图内，且「已用越多越靠下」
+    const ys = polylines.map((node) => node.props.points.split(" ").map((pair) => Number(pair.split(",")[1])));
+    for (const row of ys) for (const y of row) assert.ok(y > 0 && y < 120, "折线不越出画布：" + y);
+    await act(async () => tree.unmount()); tree = null;
+
+    // 没有额度历史（旧数据 / 刚开始记录）：只画柱，不画空折线、不出现空图例
+    const noQuota = payload("OpenCode", [supplier([{ name: "周用量", kind: "win", pct: 2 }], {
+      todayTokens: 3_155_000, todayUsage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 1, cacheWriteTokens: 0, unsplitTokens: 0 }, usageDays,
+    })]);
+    noQuota.poll = { intervalSeconds: 60, retentionDays: 7, usageHistoryDays: 7 };
+    const bare = client(async () => response(noQuota));
+    tree = await mount(bare);
+    await act(async () => tree.root.findByProps({ "data-qm-stats-entry": "" }).props.onClick());
+    await flush();
+    const barePlot = tree.root.findByProps({ "data-qm-chart": "opencode" });
+    assert.equal(barePlot.findAll((node) => node.props.className === "qm-chart-bar").length, 2);
+    assert.equal(barePlot.findAll((node) => node.props.className === "qm-chart-line").length, 0);
+    assert.equal(tree.root.findAllByProps({ className: "qm-chart-key" }).length, 0);
+    await act(async () => tree.unmount()); tree = null;
+
+    // 一个有量的供应商都没有：空态一句话，不画空图表
+    const empty = client(async () => response(payload("OpenCode", [supplier([{ name: "周用量", kind: "win", pct: 2 }])])));
+    tree = await mount(empty);
+    await act(async () => tree.root.findByProps({ "data-qm-stats-entry": "" }).props.onClick());
+    await flush();
+    assert.match(textOf(tree.root.findByProps({ className: "qm-empty" })), /暂无本地用量数据/);
+    assert.equal(tree.root.findAllByProps({ "data-qm-chart": "opencode" }).length, 0);
+  } finally { await act(async () => tree?.unmount()); }
+});
+
+test("the quota line breaks at resets and normalizes to a day-aligned axis", async () => {
+  const host = client(async () => response(payload("A")));
+  const { chartDomainOf, quotaSegmentsOf, quotaLegendOf, dayStartOf } = host.helpers;
+  assert.equal(dayStartOf("2026-10-27"), new Date(2026, 9, 27).getTime());
+  assert.ok(Number.isNaN(dayStartOf("2026/10/27")), "格式不对就是 NaN，不猜");
+
+  // 时间轴左缘 = 第一天 00:00（柱是整天一格，线必须落在同一把尺子上）
+  const days = [{ day: "2026-10-25" }, { day: "2026-10-26" }, { day: "2026-10-27" }];
+  const now = new Date(2026, 9, 27, 12).getTime();
+  const domain = chartDomainOf(days, now);
+  assert.equal(domain.start, new Date(2026, 9, 25).getTime());
+  assert.equal(domain.end, now, "今天还没过完，右缘就是此刻");
+  // 未来日（时钟漂移）不让右缘越过后一天 00:00
+  assert.equal(chartDomainOf(days, new Date(2026, 10, 5).getTime()).end, new Date(2026, 9, 28).getTime());
+  assert.equal(chartDomainOf([], now), null, "没有日期就没有图");
+
+  // 断开规则：pct 下降 = 换了新窗口；上升/持平都算同一条线
+  //（返回值来自 vm realm，按字符串比较，避免跨 realm 的原型差异）
+  assert.equal(quotaSegmentsOf([[1, 10], [2, 20], [3, 20], [4, 5], [5, 8]]).length, 2);
+  assert.equal(quotaSegmentsOf([[1, 10], [2, 20], [3, 20], [4, 5], [5, 8]]).map((s) => s.length).join(","), "3,2");
+  assert.equal(quotaSegmentsOf([[1, 5]]).length, 1, "单点也是一段（渲染成圆点）");
+  assert.equal(quotaSegmentsOf([["x", 5], [2, NaN]]).length, 0, "坏点整段丢弃");
+
+  // 图例：名称取当前条目的短标签，剩余 = 100 − 最后一个 pct；没有样本的指标不出现
+  const entries = [{ key: "window.5h", short: "5h" }, { key: "window.weekly", name: "周用量" }];
+  const legend = quotaLegendOf({ "window.5h": [[1, 62]], "window.weekly": [[1, 20], [2, 21]], "gone.key": [] }, entries);
+  assert.equal(legend.map((item) => `${item.label}:${item.remaining}`).join(","), "5h:38,周用量:79");
+  assert.ok(colorUnique(legend), "同一张图里每条线颜色都不同");
+  assert.equal(quotaLegendOf({}, entries).length, 0);
+});
+
+/** 图例配色不重复（同一张图里两条同色线等于没有图例）。 */
+function colorUnique(legend) {
+  return new Set(legend.map((item) => item.color)).size === legend.length;
+}
 
 test("the supplier page lists watched limits in check order, moves them, and saves displayKeys", async () => {
   const posts = [];

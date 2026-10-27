@@ -1,22 +1,28 @@
 // test/storage.mjs — 本地用量数据存储单元测试（真实临时目录，纯 fs）
 // 用法：node test/storage.mjs
 import assert from "node:assert/strict";
-import fs, { mkdirSync, mkdtempSync, rmSync, existsSync } from "node:fs";
+import fs, { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   LEGACY_DIR_NAME,
   USAGE_DIR_NAME,
+  USAGE_FILE_VERSION,
+  breakdownOf,
   dayKeyOf,
+  dayLabelOf,
+  dayUsageHistory,
   hourKeyOf,
   hourTimeMs,
   loadUsageFile,
   migrateUsageDir,
   pruneBuckets,
+  readUsageFile,
   saveUsageFile,
   splitDayTokens,
   sumDayTokens,
+  totalOf,
   usageFilePath,
 } from "../lib/storage.js";
 
@@ -38,14 +44,36 @@ console.log(`✓ 小时桶 key：${keyNow}（YYYYMMDDHH / 日前缀 / 解析）`
 const oldKey = hourKeyOf(new Date(now.getTime() - 8 * 24 * 3600_000)); // 8 天前
 const recentKey = hourKeyOf(new Date(now.getTime() - 3600_000)); // 1 小时前
 const buckets = {
-  deepseek: { [oldKey]: 999, [recentKey]: 100, bad: 5 },
+  deepseek: {
+    [oldKey]: { inputTokens: 999 },
+    [recentKey]: { inputTokens: 100, outputTokens: 20 },
+    bad: 5,
+  },
+  // 版本 1 的数字仍可读：归一为未细分
   opencode: { [recentKey]: 50, zeroed: 0 },
 };
 const bucketsBefore = JSON.stringify(buckets);
 const pruned = pruneBuckets(buckets, 7, now);
-assert.deepEqual(pruned, { deepseek: { [recentKey]: 100 }, opencode: { [recentKey]: 50 } }, "过期/非法/零值桶应被修剪");
+assert.deepEqual(pruned, {
+  deepseek: { [recentKey]: { inputTokens: 100, outputTokens: 20 } },
+  opencode: { [recentKey]: { unsplitTokens: 50 } },
+}, "过期/非法/零值桶应被修剪；旧数字按未细分归一");
 assert.equal(JSON.stringify(buckets), bucketsBefore, "修剪不得修改入参");
-console.log("✓ 保留期修剪：只留 7 天内 >0 的合法小时桶");
+console.log("✓ 保留期修剪：只留 7 天内 >0 的合法小时桶（分量对象与旧数字都接受）");
+
+// ---- 分量归一化 ----
+{
+  const empty = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, unsplitTokens: 0 };
+  assert.deepEqual(breakdownOf(undefined), empty);
+  assert.deepEqual(breakdownOf("12"), { ...empty, unsplitTokens: 12 }, "数值字符串按旧总量处理");
+  assert.deepEqual(breakdownOf({ inputTokens: 1.9, outputTokens: -2, cacheReadTokens: Infinity, cacheWriteTokens: "3" }),
+    { inputTokens: 1, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 3, unsplitTokens: 0 },
+    "小数取整、负数/非有限值归零");
+  assert.equal(totalOf({ inputTokens: 1, cacheReadTokens: 2, unsplitTokens: 3 }), 6);
+  assert.equal(totalOf(5), 5, "标量按总量解释");
+  assert.equal(totalOf({ inputTokens: 0 }), 0);
+  console.log("✓ 分量归一化：数字/字符串/对象/非法值都收敛到五项");
+}
 
 // ---- 原子写 + 载入回读 ----
 const res = saveUsageFile(file, buckets, 7);
@@ -67,12 +95,12 @@ console.log("✓ 缺失/空文件容错");
   const noon = new Date(2026, 8, 12, 12, 30, 0); // 本地 2026-09-12 12:30
   const day = dayKeyOf(noon);
   const hours = {
-    [`${day}00`]: 10, // 当天首小时
-    [`${day}09`]: 5,
-    [`${day}23`]: 100, // 当天末小时
-    [`${day}24`]: 999, // 非法小时键不得计入
-    [dayKeyOf(new Date(2026, 8, 11, 23, 0, 0)) + "23"]: 77, // 跨日边界：昨日末小时
-    [dayKeyOf(new Date(2026, 8, 13, 0, 0, 0)) + "00"]: 88, // 明日首小时
+    [`${day}00`]: { inputTokens: 10 }, // 当天首小时
+    [`${day}09`]: { outputTokens: 5 },
+    [`${day}23`]: { cacheReadTokens: 100 }, // 当天末小时
+    [`${day}24`]: { inputTokens: 999 }, // 非法小时键不得计入
+    [dayKeyOf(new Date(2026, 8, 11, 23, 0, 0)) + "23"]: { inputTokens: 77 }, // 跨日边界：昨日末小时
+    [dayKeyOf(new Date(2026, 8, 13, 0, 0, 0)) + "00"]: { inputTokens: 88 }, // 明日首小时
     bad: 123,
   };
   assert.equal(sumDayTokens(hours, noon), 115, "只累加当天 00–23 的桶");
@@ -80,10 +108,11 @@ console.log("✓ 缺失/空文件容错");
   assert.equal(sumDayTokens(undefined, noon), null, "无桶 → null");
   assert.equal(sumDayTokens({ [`${day}00`]: 0, [`${day}01`]: -5, [`${day}02`]: "x" }, noon), null,
     "全 0/负数/非法值 → null（不把未知当 0 以外的意思，也不返回 0）");
-  assert.equal(sumDayTokens({ [`${day}00`]: "12" }, noon), 12, "数值字符串按数值累加");
+  assert.equal(sumDayTokens({ [`${day}00`]: "12" }, noon), 12, "版本 1 的数值字符串仍按总量累加");
+  assert.equal(sumDayTokens({ [`${day}00`]: { inputTokens: "12" } }, noon), 12, "分量里的数值字符串也接受");
   // 读键次数上界：实现只允许发 24 次键查询（用 Proxy 计数）
   let reads = 0;
-  const counted = new Proxy({ [`${day}03`]: 7 }, {
+  const counted = new Proxy({ [`${day}03`]: { inputTokens: 7 } }, {
     get(target, key) { if (typeof key === "string") reads++; return target[key]; },
   });
   assert.equal(sumDayTokens(counted, noon), 7);
@@ -94,22 +123,22 @@ console.log("✓ 缺失/空文件容错");
   assert.equal(sumDayTokens(legacyHeavy, noon), null, "90 天历史里当天无数据 → null");
   legacyHeavy[`${day}05`] = 3;
   assert.equal(sumDayTokens(legacyHeavy, noon), 3, "历史很长时当日读数不变");
-  console.log("✓ 今日统计：只用当天 24 个小时键（含跨日/非法键/90 天历史）");
+  console.log("✓ 今日统计：只用当天 24 个小时键（含跨日/非法键/90 天历史/旧数字）");
 }
 
-// ---- 今日用量的计费时段拆分：纯读推导，不动文件结构 ----
+// ---- 今日用量的计费时段拆分：纯读推导，按分量求和 ----
 {
   // 2026-10-13 是周二（普通工作日）。用北京墙钟时刻构造，宿主时区只影响 key 的本地编码。
   const bjDate = (d, hh) => new Date(Date.UTC(2026, 9, d, hh - 8, 0, 0));
   const nowBj = bjDate(13, 20); // 当晚 20:00
   const day = dayKeyOf(nowBj);
   const hours = {
-    [`${day}08`]: 10, // 谷（早于 09:00）
-    [`${day}09`]: 20, // 峰
-    [`${day}11`]: 30, // 峰
-    [`${day}12`]: 40, // 谷（午休）
-    [`${day}18`]: 50, // 谷（18:00 右开）
-    [`${day}23`]: 60, // 谷
+    [`${day}08`]: { inputTokens: 10 }, // 谷（早于 09:00）
+    [`${day}09`]: { inputTokens: 20 }, // 峰
+    [`${day}11`]: { outputTokens: 30 }, // 峰
+    [`${day}12`]: { cacheReadTokens: 40 }, // 谷（午休）
+    [`${day}18`]: { cacheWriteTokens: 50 }, // 谷（18:00 右开）
+    [`${day}23`]: { inputTokens: 60, unsplitTokens: 0 }, // 谷
   };
   const split = splitDayTokens(hours, nowBj);
   assert.deepEqual(split, { peakTokens: 50, valleyTokens: 160, unknownTokens: 0 });
@@ -137,16 +166,89 @@ console.log("✓ 缺失/空文件容错");
 
   // 读键次数上界与 sumDayTokens 同一口径（24 次）
   let reads = 0;
-  const counted = new Proxy({ [`${day}09`]: 6 }, {
+  const counted = new Proxy({ [`${day}09`]: { inputTokens: 6 } }, {
     get(target, key) { if (typeof key === "string") reads++; return target[key]; },
   });
   assert.deepEqual(splitDayTokens(counted, nowBj), { peakTokens: 6, valleyTokens: 0, unknownTokens: 0 });
   assert.equal(reads, 24, "拆分同样只查 24 个小时键");
 
   // 用户覆盖表参与：把 2026-10-13 标成假日 → 当天 09:00 那格也变谷价
-  const overridden = splitDayTokens({ [`${day}09`]: 20 }, nowBj, ["2026-10-13"]);
+  const overridden = splitDayTokens({ [`${day}09`]: { inputTokens: 20 } }, nowBj, ["2026-10-13"]);
   assert.deepEqual(overridden, { peakTokens: 0, valleyTokens: 20, unknownTokens: 0 });
   console.log("✓ 今日峰谷拆分：三段之和 = 今日总量；旧桶归未知；覆盖表参与判定");
+}
+
+// ---- 近 N 天历史：升序、今日在末、空日为 0、每天只读 24 个键 ----
+{
+  const noon = new Date(2026, 8, 12, 12, 30, 0); // 本地 2026-09-12 12:30
+  const today = dayKeyOf(noon);
+  const yesterday = dayKeyOf(new Date(2026, 8, 11, 12, 0, 0));
+  const threeDaysAgo = dayKeyOf(new Date(2026, 8, 9, 12, 0, 0));
+  const hours = {
+    [`${today}09`]: { inputTokens: 10, outputTokens: 5 },
+    [`${yesterday}10`]: { cacheReadTokens: 7 },
+    [`${threeDaysAgo}11`]: 3, // 版本 1 数字 → 未细分
+    [`${today}24`]: { inputTokens: 999 }, // 非法小时键不得计入
+  };
+  const history = dayUsageHistory(hours, 4, noon);
+  assert.deepEqual(history.map((row) => row.day), ["2026-09-09", "2026-09-10", "2026-09-11", "2026-09-12"],
+    "升序，最后一行是今天");
+  assert.deepEqual(history.map((row) => row.total), [3, 0, 7, 15], "空日保留 0 行，跨日不串");
+  assert.deepEqual(history[0], {
+    day: "2026-09-09", inputTokens: 0, outputTokens: 0, cacheReadTokens: 0,
+    cacheWriteTokens: 0, unsplitTokens: 3, total: 3,
+  }, "旧数字计入未细分，不猜分布");
+  assert.deepEqual(history[3], {
+    day: "2026-09-12", inputTokens: 10, outputTokens: 5, cacheReadTokens: 0,
+    cacheWriteTokens: 0, unsplitTokens: 0, total: 15,
+  });
+  for (const row of history) {
+    assert.equal(row.inputTokens + row.outputTokens + row.cacheReadTokens + row.cacheWriteTokens + row.unsplitTokens,
+      row.total, "每行的五项之和必须等于总量");
+  }
+  assert.equal(dayUsageHistory(hours, 1, noon).length, 1, "保留期 1 天时只给今天");
+  assert.equal(dayUsageHistory(hours, 1, noon)[0].day, dayLabelOf(noon));
+  assert.deepEqual(dayUsageHistory(undefined, 2, noon).map((row) => row.total), [0, 0], "无桶 → 全 0 行");
+  // 读键上界：每天 24 次
+  let reads = 0;
+  const counted = new Proxy({ [`${today}03`]: { inputTokens: 7 } }, {
+    get(target, key) { if (typeof key === "string") reads++; return target[key]; },
+  });
+  dayUsageHistory(counted, 2, noon);
+  assert.equal(reads, 48, "两天历史 = 48 次小时键查询（每天 24 次）");
+  console.log("✓ 近 N 天历史：升序/空日/旧数字未细分/每天 24 键");
+}
+
+// ---- 版本 1 → 2：旧总数以未细分保留；未知版本不读且不覆盖 ----
+{
+  const v1 = join(dir, "v1.json");
+  writeFileSync(v1, JSON.stringify({ version: 1, buckets: { deepseek: { [recentKey]: 100, [oldKey]: 5 } } }));
+  const read = readUsageFile(v1);
+  assert.equal(read.status, "ok");
+  assert.equal(read.version, 1);
+  assert.deepEqual(read.buckets, { deepseek: { [recentKey]: { unsplitTokens: 100 }, [oldKey]: { unsplitTokens: 5 } } },
+    "读入不改时间范围，只把数字归一为未细分");
+  const v2 = join(dir, "v2.json");
+  saveUsageFile(v2, read.buckets, 7);
+  const raw = JSON.parse(readFileSync(v2, "utf8"));
+  assert.equal(raw.version, USAGE_FILE_VERSION, "保存总是写当前版本");
+  assert.deepEqual(raw.buckets.deepseek[recentKey], { unsplitTokens: 100 }, "落盘为稀疏分量对象");
+  assert.equal(raw.buckets.deepseek[oldKey], undefined, "超出保留期的旧桶在保存时修剪");
+  // 同一对象里混入旧数字：逐桶归一
+  const mixed = join(dir, "mixed.json");
+  writeFileSync(mixed, JSON.stringify({ version: 2, buckets: {
+    deepseek: { [recentKey]: { inputTokens: 9, outputTokens: "x", cacheReadTokens: -1 }, [oldKey]: 7 },
+  } }));
+  assert.deepEqual(loadUsageFile(mixed), {
+    deepseek: { [recentKey]: { inputTokens: 9 }, [oldKey]: { unsplitTokens: 7 } },
+  });
+  // 未知版本：不支持、原文件保留
+  const future = join(dir, "future.json");
+  writeFileSync(future, '{"version":3,"buckets":{}}');
+  assert.equal(readUsageFile(future).status, "invalid");
+  assert.equal(JSON.parse(readFileSync(future, "utf8")).version, 3, "原文件必须原样保留");
+  assert.deepEqual(loadUsageFile(future), {});
+  console.log("✓ 版本 1→2：旧总数未细分保留；保存写 v2；未知版本不读不覆盖");
 }
 
 // ---- 两个不同时区的进程读同一份桶：按各自本地日求和 ----
@@ -200,12 +302,12 @@ assert.equal(migratedPath.path, usageFilePath(migDir), "应返回新目录路径
 assert.equal(migratedPath.status, "migrated", "旧目录存在且目标目录不存在时必须真的搬迁");
 assert.equal(existsSync(legacyPath), false, "旧目录应已搬走");
 assert.equal(existsSync(legacyDirPath), false, "旧目录本身不得残留");
-assert.deepEqual(loadUsageFile(migratedPath.path), { deepseek: { [recentKey]: 42 } }, "迁移后数据必须原样保留");
+assert.deepEqual(loadUsageFile(migratedPath.path), { deepseek: { [recentKey]: { unsplitTokens: 42 } } }, "迁移后数据必须原样保留");
 // 幂等：再调一次不应报错、不应改动数据（目标已存在 → kept-new）
 const migratedAgain = migrateUsageDir(migDir);
 assert.equal(migratedAgain.path, usageFilePath(migDir));
 assert.equal(migratedAgain.status, "kept-new");
-assert.deepEqual(loadUsageFile(migratedAgain.path), { deepseek: { [recentKey]: 42 } }, "重复调用不得改动数据");
+assert.deepEqual(loadUsageFile(migratedAgain.path), { deepseek: { [recentKey]: { unsplitTokens: 42 } } }, "重复调用不得改动数据");
 console.log("✓ 改名迁移：旧用量目录搬到新目录且数据无损（含重复调用幂等）");
 
 // 新目录已存在时不动旧目录（避免覆盖现有数据）
@@ -214,7 +316,7 @@ saveUsageFile(legacyAgain, { stale: { [recentKey]: 1 } }, 7);
 const afterSecond = migrateUsageDir(migDir);
 assert.equal(afterSecond.path, usageFilePath(migDir), "已有新目录时仍用新目录");
 assert.equal(afterSecond.status, "kept-new", "新旧并存时不得合并、不得覆盖");
-assert.deepEqual(loadUsageFile(afterSecond.path), { deepseek: { [recentKey]: 42 } }, "不得被旧目录覆盖");
+assert.deepEqual(loadUsageFile(afterSecond.path), { deepseek: { [recentKey]: { unsplitTokens: 42 } } }, "不得被旧目录覆盖");
 assert.equal(existsSync(legacyAgain), true, "新旧并存时旧目录必须原样保留，不能删");
 console.log("✓ 新目录已存在时不搬迁、不覆盖");
 
@@ -228,7 +330,7 @@ const splitResult = migrateUsageDir(splitDir);
 assert.equal(splitResult.status, "fallback-legacy", "目标空目录 + 旧文件 → 必须回落旧路径");
 assert.equal(splitResult.error, "target-dir-exists", "必须记下回落原因供诊断");
 assert.equal(splitResult.path, splitLegacy, "回落时必须返回旧 usage.json 路径");
-assert.deepEqual(loadUsageFile(splitResult.path), { moonshot: { [recentKey]: 7 } }, "回落读到的仍是旧数据");
+assert.deepEqual(loadUsageFile(splitResult.path), { moonshot: { [recentKey]: { unsplitTokens: 7 } } }, "回落读到的仍是旧数据");
 assert.equal(existsSync(splitLegacy), true, "回落时不得删除旧文件");
 assert.equal(existsSync(usageFilePath(splitDir)), false, "回落时不得凭空造出空的新文件");
 assert.equal(existsSync(join(splitNextDir, LEGACY_DIR_NAME)), false, "不得把旧目录嵌套进目标目录（POSIX rename 陷阱）");
@@ -236,7 +338,7 @@ assert.equal(existsSync(join(splitNextDir, LEGACY_DIR_NAME)), false, "不得把�
 rmSync(splitNextDir, { recursive: true, force: true });
 const splitRetry = migrateUsageDir(splitDir);
 assert.equal(splitRetry.status, "migrated", "目标目录被清理后重试必须成功迁移");
-assert.deepEqual(loadUsageFile(splitRetry.path), { moonshot: { [recentKey]: 7 } }, "重试迁移后数据不变");
+assert.deepEqual(loadUsageFile(splitRetry.path), { moonshot: { [recentKey]: { unsplitTokens: 7 } } }, "重试迁移后数据不变");
 console.log("✓ 目标空目录/缺 usage.json：回落旧路径读，不嵌套不合并（清理后可重试）");
 
 // 跨设备（EXDEV）/ 权限（EPERM）失败：不删旧数据，回落旧路径，状态可诊断
@@ -251,7 +353,7 @@ for (const code of ["EXDEV", "EPERM"]) {
   assert.equal(failed.status, "fallback-legacy", `${code}：必须回落旧路径`);
   assert.equal(failed.error, code, `${code}：必须把失败原因记进 status`);
   assert.equal(failed.path, failLegacy, `${code}：必须继续用旧 usage.json`);
-  assert.deepEqual(loadUsageFile(failed.path), { zai: { [recentKey]: 5 } }, `${code}：数据不得丢失`);
+  assert.deepEqual(loadUsageFile(failed.path), { zai: { [recentKey]: { unsplitTokens: 5 } } }, `${code}：数据不得丢失`);
   assert.equal(existsSync(failLegacy), true, `${code}：不得删除旧数据`);
   assert.equal(existsSync(usageFilePath(failDir)), false, `${code}：不得留下半截新文件`);
 }

@@ -1,12 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { apply, Config } from "../lib/index.js";
 import { createCtx } from "./harness.mjs";
 import { PROVIDERS } from "../lib/providers.js";
 import * as season from "../lib/season.js";
+import { dayLabelOf } from "../lib/storage.js";
 
 test("plugin instances do not share traffic and dispose releases event handlers", async () => {
   const originalHome = process.env.DSH_HOME;
@@ -166,7 +167,7 @@ test("season rides on /state as a host verdict; the holiday override round-trips
   assert.equal(salvaged.season.kind, first.season.kind);
 });
 
-test("today's split is attributed per hour and only DeepSeek gets one", async (t) => {
+test("today's usage carries the five-part breakdown and a seven-day history", async (t) => {
   const previousHome = process.env.DSH_HOME;
   const home = mkdtempSync(join(tmpdir(), "qm-split-"));
   process.env.DSH_HOME = home;
@@ -179,10 +180,12 @@ test("today's split is attributed per hour and only DeepSeek gets one", async (t
     rmSync(home, { recursive: true, force: true });
   });
 
-  // 走真实事件通道喂一条 usage（与 usage-saves.mjs 同一形状），再确认载荷里的拆分与今日总量同源
+  // 走真实事件通道喂一条带齐四项分量的 usage（与 usage-saves.mjs 同一形状）
   harness.emit("session/event", { id: "s1" }, { type: "assistant/chunk", data: {
     provider: "deepseek-official", turn: 1, step: 1,
-    chunk: { type: "usage", usage: { inputTokens: 1_000, outputTokens: 0 } },
+    chunk: { type: "usage", usage: {
+      inputTokens: 1_000, outputTokens: 200, cacheReadTokens: 300, cacheWriteTokens: 50,
+    } },
   } });
   const state = await harness.call("/api/dsh-token-quota/state");
   const deepseek = state.suppliers.find((s) => s.id === "deepseek");
@@ -190,9 +193,158 @@ test("today's split is attributed per hour and only DeepSeek gets one", async (t
   assert.ok(deepseek.todayTokens > 0, "同一轮事件应已计入今日用量：" + deepseek.todayTokens);
   assert.equal(split.peakTokens + split.valleyTokens + split.unknownTokens, deepseek.todayTokens,
     "三段之和必须等于今日总量，不能因为拆分丢数");
+  assert.deepEqual(deepseek.todayUsage, {
+    inputTokens: 1_000, outputTokens: 200, cacheReadTokens: 300, cacheWriteTokens: 50, unsplitTokens: 0,
+  }, "今日分布必须逐项等于事件里的互不相交分量");
+  assert.equal(deepseek.todayUsage.inputTokens + deepseek.todayUsage.outputTokens + deepseek.todayUsage.cacheReadTokens
+    + deepseek.todayUsage.cacheWriteTokens + deepseek.todayUsage.unsplitTokens, deepseek.todayTokens,
+  "五项之和必须等于 todayTokens");
+  assert.equal(state.poll.usageHistoryDays, 7, "默认保留期 7 天 → 历史窗口 7 天");
+  assert.equal(deepseek.usageDays.length, 7, "历史窗口按天给满，包含没有记录的日子");
+  assert.deepEqual(deepseek.usageDays.map((row) => row.day).slice().sort(), deepseek.usageDays.map((row) => row.day),
+    "历史按日期升序");
+  assert.equal(deepseek.usageDays.at(-1).day, dayLabelOf(new Date()), "最后一行必须是今天");
+  assert.equal(deepseek.usageDays.at(-1).total, deepseek.todayTokens);
+  assert.deepEqual(deepseek.usageDays.slice(0, -1).map((row) => row.total), [0, 0, 0, 0, 0, 0],
+    "没有记录的日子保留 0 行（不伪造数据）");
   assert.equal(state.suppliers.find((s) => s.id === "openrouter").seasonSplit, null, "非 DeepSeek 供应商不挂拆分");
+  assert.equal(state.suppliers.find((s) => s.id === "openrouter").usageDays.length, 7,
+    "但每个供应商都有自己的分量历史");
   // 今天的桶落在今天：断言两个各自独立计算的数字确实对得上，而不是各算各的
   assert.equal(split.unknownTokens, 0, "今天的桶晚于峰谷定价实施日，不该落进未知段");
+
+  // 保留期缩短 → 历史窗口跟着缩到 min(7, retention)，不展示已修剪之外的天数
+  await harness.ctx.settings.update("dsh-token-quota", { retentionDays: 2 });
+  const shrunk = await harness.call("/api/dsh-token-quota/state");
+  assert.equal(shrunk.poll.usageHistoryDays, 2);
+  assert.equal(shrunk.suppliers.find((s) => s.id === "deepseek").usageDays.length, 2);
+  assert.equal(shrunk.suppliers.find((s) => s.id === "deepseek").usageDays.at(-1).total, deepseek.todayTokens);
+});
+
+test("quota history reaches /state only on demand, clipped to the usage window", async (t) => {
+  const previousHome = process.env.DSH_HOME;
+  const home = mkdtempSync(join(tmpdir(), "qm-quota-runtime-"));
+  process.env.DSH_HOME = home;
+  // 预置一份额度历史（等价于「插件已经跑过一段时间」）：窗口内 2 点 + 窗口外 1 点
+  const dir = join(home, "dsh-token-quota");
+  mkdirSync(dir, { recursive: true });
+  const now = Date.now();
+  const day = 24 * 3600_000;
+  writeFileSync(join(dir, "quota.json"), JSON.stringify({
+    version: 1,
+    suppliers: {
+      deepseek: { "window.5h": [[now - 20 * day, 5], [now - 2 * day, 60], [now - 3600_000, 62]] },
+      opencode: { "window.weekly": [[now - day, 10], [now - 60_000, 40]] },
+    },
+  }));
+
+  const harness = createCtx({ schema: Config, config: { suppliers: { deepseek: { enabled: true, apiKey: "saved" } } } });
+  const dispose = apply(harness.ctx, harness.configRef);
+  t.after(() => {
+    dispose();
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  // 默认不带：卡片轮询不背这份历史
+  const plain = await harness.call("/api/dsh-token-quota/state");
+  assert.equal(plain.suppliers.every((s) => s.quotaHistory === undefined), true,
+    "不带 ?quota=1 时任何供应商都不回传额度历史");
+  assert.equal(plain.poll.quotaHistoryDays, plain.poll.usageHistoryDays, "折线与柱共用同一条时间轴");
+
+  const withQuota = await harness.call("/api/dsh-token-quota/state?quota=1");
+  const deepseek = withQuota.suppliers.find((s) => s.id === "deepseek");
+  const series = deepseek.quotaHistory["window.5h"];
+  assert.deepEqual(series, [[now - 2 * day, 60], [now - 3600_000, 62]],
+    "窗口外的点被裁掉，窗口内保持升序 [时刻, 已用百分比]");
+  const opencode = withQuota.suppliers.find((s) => s.id === "opencode");
+  assert.deepEqual(opencode.quotaHistory["window.weekly"], [[now - day, 10], [now - 60_000, 40]]);
+  // 没有采样点的供应商不挂空对象：客户端据此判断「没有折线可画」
+  assert.equal(withQuota.suppliers.find((s) => s.id === "openrouter").quotaHistory, undefined);
+
+  // 保留期缩短 → 额度折线的窗口同步缩短（跟随 token 历史，而不是磁盘的 14 天）
+  await harness.ctx.settings.update("dsh-token-quota", { retentionDays: 2 });
+  const shrunk = await harness.call("/api/dsh-token-quota/state?quota=1");
+  assert.equal(shrunk.poll.quotaHistoryDays, 2);
+  assert.deepEqual(shrunk.suppliers.find((s) => s.id === "deepseek").quotaHistory["window.5h"],
+    [[now - 2 * day, 60], [now - 3600_000, 62]],
+    "窗口左缘多留一个切点之前的锚点，折线才能从边缘进入；更早的点仍然裁掉");
+});
+
+test("a successful query appends a quota sample, and an unchanged value does not", async (t) => {
+  const previousHome = process.env.DSH_HOME;
+  const previousFetch = globalThis.fetch;
+  const home = mkdtempSync(join(tmpdir(), "qm-quota-sample-"));
+  process.env.DSH_HOME = home;
+  let percent = 12;
+  // opencode 的 usage 端点替身：rolling/weekly/monthly 各给一个百分比
+  globalThis.fetch = async (url) => {
+    if (!String(url).includes("/zen/go/v1/usage")) return { ok: false, status: 401, text: async () => "" };
+    return { ok: true, status: 200, text: async () => JSON.stringify({ usage: {
+      rolling: { percent, resetsAt: new Date(Date.now() + 3600_000).toISOString() },
+      weekly: { percent: percent + 10, resetsAt: new Date(Date.now() + 86400_000).toISOString() },
+    } }) };
+  };
+  const harness = createCtx({ schema: Config, config: { suppliers: { opencode: { enabled: true, apiKey: "sk-test" } } } });
+  const dispose = apply(harness.ctx, harness.configRef);
+  t.after(() => {
+    dispose();
+    globalThis.fetch = previousFetch;
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  await harness.call("/api/dsh-token-quota/refresh", {});
+  const first = (await harness.call("/api/dsh-token-quota/state?quota=1")).suppliers.find((s) => s.id === "opencode");
+  assert.deepEqual(first.quotaHistory["window.rolling"].map(([, pct]) => pct), [12],
+    "查到的百分比按 key 落进历史");
+  assert.deepEqual(first.quotaHistory["window.weekly"].map(([, pct]) => pct), [22]);
+
+  // 值没变：不产生新点（额度在窗口内单调，重复点只是体积）
+  await harness.call("/api/dsh-token-quota/refresh", {});
+  const unchanged = (await harness.call("/api/dsh-token-quota/state?quota=1")).suppliers.find((s) => s.id === "opencode");
+  assert.equal(unchanged.quotaHistory["window.rolling"].length, 1, "同一个百分比不重复记");
+
+  // 值变了：追加一个点，且严格升序
+  percent = 40;
+  await harness.call("/api/dsh-token-quota/refresh", {});
+  const grown = (await harness.call("/api/dsh-token-quota/state?quota=1")).suppliers.find((s) => s.id === "opencode");
+  const series = grown.quotaHistory["window.rolling"];
+  assert.deepEqual(series.map(([, pct]) => pct), [12, 40]);
+  assert.ok(series[1][0] > series[0][0], "时刻严格升序");
+
+  // 真正落盘：quota.json 与 usage.json 同目录，dispose 时同步冲刷
+  dispose();
+  const saved = JSON.parse(readFileSync(join(home, "dsh-token-quota", "quota.json"), "utf8"));
+  assert.equal(saved.version, 1);
+  assert.deepEqual(saved.suppliers.opencode["window.rolling"].map(([, pct]) => pct), [12, 40]);
+});
+
+test("a retried attempt adds to the same step instead of replacing it", async (t) => {
+  const previousHome = process.env.DSH_HOME;
+  const home = mkdtempSync(join(tmpdir(), "qm-retry-"));
+  process.env.DSH_HOME = home;
+  const harness = createCtx({ schema: Config, config: { suppliers: { deepseek: { enabled: true, apiKey: "saved" } } } });
+  const dispose = apply(harness.ctx, harness.configRef);
+  t.after(() => {
+    dispose();
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    rmSync(home, { recursive: true, force: true });
+  });
+  const usage = (inputTokens) => ({ type: "assistant/chunk", data: {
+    provider: "deepseek-official", turn: 2, step: 1,
+    chunk: { type: "usage", usage: { inputTokens } },
+  } });
+  harness.emit("session/event", { id: "s1" }, usage(100));
+  harness.emit("llm/retry-started", { id: "s1" }, { type: "llm/retry-started", data: { turn: 2, step: 1 } });
+  harness.emit("session/event", { id: "s1" }, usage(40));
+  const state = await harness.call("/api/dsh-token-quota/state");
+  const deepseek = state.suppliers.find((s) => s.id === "deepseek");
+  assert.equal(deepseek.todayTokens, 140, "重试是另一次计费尝试：两次都计入，而不是后一次替换前一次");
+  assert.equal(deepseek.todayUsage.inputTokens, 140);
 });
 
 test("凭据引用在宿主侧解析，密钥本体不进配置文档", async (t) => {

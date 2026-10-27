@@ -117,15 +117,17 @@ export function createCtx({ config = {}, user, schema, foreign = [], inactive = 
     configRef: settings.ref,
     /** 触发某事件的全部监听者（测试里模拟宿主事件）。 */
     emit: (name, ...args) => { for (const fn of events.get(name) ?? []) fn(...args); },
-    /** 同步读取某路由的 JSON 响应（GET/简化 POST）。 */
+    /** 同步读取某路由的 JSON 响应（GET/简化 POST）；路径可带查询串（如 ?quota=1）。 */
     call: async (path, body) => {
-      const handler = routes.get(path);
-      if (!handler) throw new Error(`未注册路由 ${path}`);
+      const url = String(path).startsWith("/") ? String(path) : `/${path}`;
+      const [base] = url.split("?");
+      const handler = routes.get(base);
+      if (!handler) throw new Error(`未注册路由 ${base}`);
       let payload;
       const res = { writeHead() {}, end(text) { payload = JSON.parse(text); } };
       const req = body === undefined
-        ? { method: "GET", headers: {}, url: "/" }
-        : Object.assign(new (await import("node:stream")).PassThrough(), { method: "POST", headers: {}, url: "/" });
+        ? { method: "GET", headers: {}, url }
+        : Object.assign(new (await import("node:stream")).PassThrough(), { method: "POST", headers: {}, url });
       const done = handler(req, res);
       if (body !== undefined) { req.end(JSON.stringify(body)); await done; }
       return payload;

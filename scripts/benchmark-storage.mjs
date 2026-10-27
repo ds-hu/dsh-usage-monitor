@@ -13,7 +13,7 @@ import { performance } from "node:perf_hooks";
 import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { acquireUsageStore, saveUsageFile, hourKeyOf, dayKeyOf, sumDayTokens } from "../lib/storage.js";
+import { acquireUsageStore, saveUsageFile, hourKeyOf, dayKeyOf, breakdownOf, totalOf, sumDayTokens } from "../lib/storage.js";
 
 const args = new Set(process.argv.slice(2));
 const quick = args.has("--quick");
@@ -34,7 +34,7 @@ function sumDayTokensLegacy(hours, date = new Date()) {
   if (!hours || typeof hours !== "object") return null;
   const day = dayKeyOf(date);
   let sum = 0;
-  for (const [key, value] of Object.entries(hours)) if (key.startsWith(day)) sum += Number(value) || 0;
+  for (const [key, value] of Object.entries(hours)) if (key.startsWith(day)) sum += totalOf(breakdownOf(value));
   return sum > 0 ? sum : null;
 }
 
@@ -42,7 +42,7 @@ function makeBuckets(suppliers, days) {
   const buckets = {};
   for (let s = 0; s < suppliers; s++) {
     const hours = buckets[`supplier-${s}`] = {};
-    for (let h = 0; h < days * 24; h++) hours[hourKeyOf(new Date(Date.now() - h * 3600000))] = 10_000;
+    for (let h = 0; h < days * 24; h++) hours[hourKeyOf(new Date(Date.now() - h * 3600000))] = { inputTokens: 10_000, outputTokens: 2_000 };
   }
   return buckets;
 }
@@ -57,7 +57,7 @@ function benchSave(root, suppliers, days) {
   const times = [];
   try {
     for (let i = 0; i < SAMPLES; i++) {
-      store.store.buckets["supplier-0"][hourKeyOf()]++;
+      store.store.buckets["supplier-0"][hourKeyOf()].inputTokens++;
       store.markDirty();
       const start = performance.now();
       const result = store.flush();

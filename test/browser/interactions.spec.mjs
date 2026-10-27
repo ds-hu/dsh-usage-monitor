@@ -6,14 +6,52 @@ import { resolve } from "node:path";
 const BASE = "http://127.0.0.1:4179";
 const baseConfig = { suppliers: { opencode: { enabled: true, orgId: "org-original" } } };
 const visualDirectory = resolve(".scratch/sidebar-ui-visual");
+/** 近 N 天标签（升序，最后一个是今天），与宿主 dayUsageHistory 同格式。 */
+const dayLabels = (count) => Array.from({ length: count }, (_, i) => {
+  const date = new Date();
+  date.setDate(date.getDate() - (count - 1 - i));
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+});
+/** 每日 token 历史：只有今天与 3 天前有量，其余为 0 行（同宿主口径）。 */
+const usageDaysFixture = (todayTotal = 3_155_000) => dayLabels(7).map((day, index, all) => {
+  const total = index === all.length - 1 ? todayTotal : index === all.length - 4 ? 1_068_000 : 0;
+  const scale = total / (todayTotal || 1);
+  return {
+    day,
+    inputTokens: Math.round(100_000 * scale),
+    outputTokens: Math.round(15_000 * scale),
+    cacheReadTokens: Math.round(3_000_000 * scale),
+    cacheWriteTokens: Math.round(40_000 * scale),
+    unsplitTokens: 0,
+    total,
+  };
+});
+/** 额度历史：5h 用满后重置（折线断开），周用量缓升。时刻对齐到对应自然日。 */
+const quotaHistoryFixture = () => {
+  const days = dayLabels(7);
+  const at = (index, hour = 9) => {
+    const [y, m, d] = days[index].split("-").map(Number);
+    return new Date(y, m - 1, d, hour).getTime();
+  };
+  return {
+    "window.5h": [[at(4), 30], [at(5), 90], [at(5, 13), 8], [at(6), 63]],
+    "window.weekly": [[at(0), 0], [at(6), 40]],
+  };
+};
 const displayFixture = () => ({
   ok: true, now: Date.now(), traffic: { channelAlive: true },
+  poll: { intervalSeconds: 60, retentionDays: 7, usageHistoryDays: 7, quotaHistoryDays: 7 },
   active: { supplierId: "opencode", name: "OpenCode", model: "deepseek-v4.1-flash-with-a-very-long-model-name", at: Date.now() },
   suppliers: [
-    { id: "opencode", name: "OpenCode", enabled: true, added: true, current: true, state: "ok", todayTokens: 1_240_000,
-      warnPct: 80, critPct: 95, lastSuccessAt: Date.now(), entries: [
-        { kind: "win", name: "5 小时", pct: 63, limit: "100%", used: "63%", resetAt: Date.now() + 7_980_000 },
-        { kind: "win", name: "周用量", pct: 40, limit: "100%", used: "40%" },
+    { id: "opencode", name: "OpenCode", enabled: true, added: true, current: true, state: "ok", todayTokens: 3_155_000,
+      warnPct: 80, critPct: 95, lastSuccessAt: Date.now(),
+      todayUsage: { inputTokens: 100_000, outputTokens: 15_000, cacheReadTokens: 3_000_000, cacheWriteTokens: 40_000, unsplitTokens: 0 },
+      usageDays: usageDaysFixture(3_155_000),
+      quotaHistory: quotaHistoryFixture(),
+      entries: [
+        { kind: "win", key: "window.5h", short: "5h", name: "5 小时", pct: 63, limit: "100%", used: "63%", resetAt: Date.now() + 7_980_000 },
+        { kind: "win", key: "window.weekly", short: "周", name: "周用量", pct: 40, limit: "100%", used: "40%" },
       ] },
     { id: "deepseek", name: "DeepSeek", enabled: true, added: true, current: true, state: "err", todayTokens: 12_000,
       lastSuccessAt: Date.now() - 3_600_000, error: { message: "查询超时" }, entries: [
@@ -206,7 +244,9 @@ test("the card shows the plan name and a coloured weekly bar, and falls back to 
 
   const opener = page.locator("[data-qm-entry]");
   const bar = opener.locator("[data-qm-bar]");
-  await expect(opener.locator(".qm-plan")).toHaveText("OpenCode");
+  // 标题行独立于监控条：供应商名 + 今日数，点击进统计
+  await expect(page.locator(".qm-head .qm-plan")).toHaveText("OpenCode");
+  await expect(page.locator(".qm-head .qm-today-chip")).toHaveText("今日 3.15M");
   await expect(opener).not.toContainText("deepseek-v4.1-flash-with-a-very-long-model-name", "模型名不再进卡片");
   await expect(opener.locator(".qm-dot")).toHaveCount(0, "卡片不再有阈值圆点");
   await expect(bar).toHaveAttribute("data-qm-window", "week");
@@ -245,6 +285,69 @@ test("the card shows the plan name and a coloured weekly bar, and falls back to 
   const lightCrit = await opener.locator(".qm-bar-fill").evaluate((node) => getComputedStyle(node).backgroundColor);
   expect(lightCrit).not.toBe(critColor);
   await page.screenshot({ path: resolve(cardDirectory, "card-week-crit-light.png"), fullPage: true });
+});
+
+test("the card head opens statistics where token bars and remaining-quota lines share one chart", async ({ page }) => {
+  const statsDirectory = resolve(".scratch/sidebar-stats");
+  await useDisplayFixture(page);
+  await page.goto("/");
+  const head = page.locator("[data-qm-stats-entry]");
+  await expect(head.locator(".qm-plan")).toHaveText("OpenCode");
+  await expect(head).toHaveAttribute("aria-haspopup", "dialog");
+  await head.click();
+
+  const dialog = page.getByRole("dialog", { name: "用量统计", exact: true });
+  await expect(dialog).toBeVisible();
+  const plot = dialog.locator('[data-qm-chart="opencode"]');
+  await expect(plot).toBeVisible();
+
+  // 柱 = 每日 token：只有两天有量，就只画两根柱（空日不画假柱子）
+  await expect(plot.locator("rect.qm-chart-bar")).toHaveCount(2);
+  // 5h 在窗口中途用满后重置 → 折线断开成两段；周用量一段，共三条
+  await expect(plot.locator("polyline.qm-chart-line")).toHaveCount(3);
+  // 图例带当前剩余：5h 已用 63% → 剩 37%；周已用 40% → 剩 60%
+  await expect(dialog.locator(".qm-chart-key")).toHaveText(["5h 剩余 37%", "周 剩余 60%"]);
+  // 比例挨着今日总量，冒号两侧留空格且三段各三位有效数字
+  await expect(dialog.locator(".qm-stats-ratio .qm-ratio")).toHaveText("30.0 : 1.00 : 0.150");
+
+  // 日期刻度每天一个，且必须与对应那根柱居中对齐（同一坐标系，不能整体偏移一个内边距）
+  await expect(dialog.locator(".qm-chart-tick")).toHaveText(dayLabels(7).map((day) => day.slice(5)));
+  const aligned = await plot.evaluate((node) => {
+    const ticks = [...node.parentElement.querySelectorAll(".qm-chart-tick")].map((el) => {
+      const box = el.getBoundingClientRect();
+      return box.left + box.width / 2;
+    });
+    return [...node.querySelectorAll("rect.qm-chart-bar")].map((bar) => {
+      const box = bar.getBoundingClientRect();
+      const center = box.left + box.width / 2;
+      return Math.min(...ticks.map((tick) => Math.abs(tick - center)));
+    });
+  });
+  expect(aligned.length).toBeGreaterThan(0);
+  for (const delta of aligned) expect(delta).toBeLessThanOrEqual(2);
+
+  // 折线必须真的画在画布内（不能因为裁剪/缩放跑出边界）
+  const inside = await plot.evaluate((node) => {
+    const svg = node.querySelector("svg");
+    const height = svg.getBoundingClientRect().height;
+    const width = svg.getBoundingClientRect().width;
+    return [...svg.querySelectorAll("polyline.qm-chart-line")].every((line) => {
+      const box = line.getBoundingClientRect();
+      return box.top >= svg.getBoundingClientRect().top - 2 && box.bottom <= svg.getBoundingClientRect().bottom + 2
+        && box.left >= svg.getBoundingClientRect().left - 2 && box.right <= svg.getBoundingClientRect().right + 2;
+    }) && height > 60 && width > 200;
+  });
+  expect(inside).toBe(true);
+  // 窄面板也不许出现横向滚动条
+  expect(await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+
+  await mkdir(statsDirectory, { recursive: true });
+  await page.screenshot({ path: resolve(statsDirectory, "stats-combined-chart.png"), fullPage: true });
+
+  // Escape 关闭后焦点回到打开它的标题行（不是监控条）
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(head).toBeFocused();
 });
 
 test("A2 sidebar preference persists and automatic narrow layout never overwrites it", async ({ page }) => {
@@ -432,8 +535,9 @@ const watchedFixture = (displayKeys, todayTokens = 1_240_000) => {
     todayTokens, displayKeys,
     entries: [
       { kind: "win", key: "window.5h", short: "5h", name: "5h 滚动", pct: 63, resetAt: Date.now() + 8_000_000 },
-      { kind: "win", key: "window.weekly", short: "周", name: "周用量", pct: 40, resetAt: Date.now() + (2 * 24 + 5) * 3_600_000 },
-      { kind: "win", key: "window.monthly", short: "月", name: "月用量", pct: 80, resetAt: Date.now() + 12 * 86_400_000 },
+      // 多给半小时余量：倒计时向下取整，恰好等于整数天时，页面加载几秒就会掉成 11d23h
+      { kind: "win", key: "window.weekly", short: "周", name: "周用量", pct: 40, resetAt: Date.now() + (2 * 24 + 5) * 3_600_000 + 30 * 60_000 },
+      { kind: "win", key: "window.monthly", short: "月", name: "月用量", pct: 80, resetAt: Date.now() + 12 * 86_400_000 + 30 * 60_000 },
     ],
   });
   return fixture;
