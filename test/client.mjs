@@ -39,7 +39,7 @@ function client(fetch, { storage = new Map(), search = "", clock = null, mobile 
     context.__setNow = (value) => { fixed.Now = value; };
   }
   // 只为纯展示函数提供测试访问点，不修改生产导出或加载方式。
-  vm.runInNewContext(source.replace("exports.apply = apply;", "exports.__test = { buildEntryView, selectPrimaryMetric, supplierStatus, connStateOf, seasonCountdown, seasonSplitText, fmtBig, weeklyEntryOf, selectBarMetrics, usageRatioOf, ratioPartsOf, splitPartsOf, chartDomainOf, quotaSegmentsOf, quotaLegendOf, dayStartOf }; exports.apply = apply;"), context);
+  vm.runInNewContext(source.replace("exports.apply = apply;", "exports.__test = { buildEntryView, selectPrimaryMetric, supplierStatus, connStateOf, seasonCountdown, seasonSplitText, fmtBig, weeklyEntryOf, selectBarMetrics, usageRatioOf, ratioPartsOf, splitPartsOf, chartDomainOf, quotaSegmentsOf, quotaLegendOf, quotaUsedAt, clockOf, dayStartOf }; exports.apply = apply;"), context);
   plugin.apply({ locale: { register(ns, locales_) { Object.assign(locales, locales_); dictionary = locales_.zh; } }, effect(fn) { cleanups.push(fn()); }, slots: {
     inject(name, fn) { return fn(); }, register(descriptor, component) { slots[descriptor.name ?? descriptor.key] = component; },
   } });
@@ -462,15 +462,30 @@ test("the card head opens the statistics view with the ratio, legend and one com
     // 5h 用满后重置 → 两段折线（不把两次窗口连成一条斜线）；周窗口一段
     const lines = plot.findAll((node) => node.props.className === "qm-chart-line");
     const polylines = lines.filter((node) => node.type === "polyline");
-    const dots = lines.filter((node) => node.type === "circle");
     assert.equal(polylines.length, 3, "5h 两段 + 周一段");
-    assert.equal(dots.length, 0, "每段至少两点，无需单点圆点");
+    // 每个采样点一个锚点（5h 4 个 + 周 2 个）；换窗口处一条虚线把两段接上，
+    // 否则稀疏时段看起来就是「线画断了」。
+    const overlay = plot.findByProps({ className: "qm-chart-overlay" });
+    assert.equal(overlay.findAllByProps({ className: "qm-chart-dot" }).length, 6);
+    assert.equal(overlay.findAllByProps({ className: "qm-chart-drop" }).length, 1, "5h 换了一次窗口");
     // 剩余额度 = 100 − 已用：5h 当前 38%，周 80%
     const keys = tree.root.findAllByProps({ className: "qm-chart-key" }).map(textOf);
     assert.deepEqual(keys, ["5h 剩余 38%", "周 剩余 80%"]);
     // 折线纵坐标必须落在图内，且「已用越多越靠下」
     const ys = polylines.map((node) => node.props.points.split(" ").map((pair) => Number(pair.split(",")[1])));
     for (const row of ys) for (const y of row) assert.ok(y > 0 && y < 120, "折线不越出画布：" + y);
+    // 悬停：十字线落在某一刻，浮层给那一刻的读数（最近一次采样，不插值）
+    await act(async () => plot.props.onPointerMove({
+      clientX: 570, currentTarget: { getBoundingClientRect: () => ({ left: 0, width: 600 }) },
+    }));
+    const tip = textOf(tree.root.findByProps({ className: "qm-chart-tip" }));
+    assert.match(tip, /10-27/, "浮层标明时刻");
+    assert.match(tip, /3\.15M token/, "那一刻所在那天的柱值");
+    assert.match(tip, /5h 剩余 38%/);
+    assert.match(tip, /周 剩余 80%/);
+    assert.ok(tree.root.findByProps({ className: "qm-chart-cursor" }), "有十字线");
+    await act(async () => plot.props.onPointerLeave({ pointerType: "mouse" }));
+    assert.equal(tree.root.findAllByProps({ className: "qm-chart-tip" }).length, 0, "移开收起");
     await act(async () => tree.unmount()); tree = null;
 
     // 没有额度历史（旧数据 / 刚开始记录）：只画柱，不画空折线、不出现空图例
@@ -500,7 +515,7 @@ test("the card head opens the statistics view with the ratio, legend and one com
 
 test("the quota line breaks at resets and normalizes to a day-aligned axis", async () => {
   const host = client(async () => response(payload("A")));
-  const { chartDomainOf, quotaSegmentsOf, quotaLegendOf, dayStartOf } = host.helpers;
+  const { chartDomainOf, quotaSegmentsOf, quotaLegendOf, quotaUsedAt, clockOf, dayStartOf } = host.helpers;
   assert.equal(dayStartOf("2026-10-27"), new Date(2026, 9, 27).getTime());
   assert.ok(Number.isNaN(dayStartOf("2026/10/27")), "格式不对就是 NaN，不猜");
 
@@ -520,6 +535,13 @@ test("the quota line breaks at resets and normalizes to a day-aligned axis", asy
   assert.equal(quotaSegmentsOf([[1, 10], [2, 20], [3, 20], [4, 5], [5, 8]]).map((s) => s.length).join(","), "3,2");
   assert.equal(quotaSegmentsOf([[1, 5]]).length, 1, "单点也是一段（渲染成圆点）");
   assert.equal(quotaSegmentsOf([["x", 5], [2, NaN]]).length, 0, "坏点整段丢弃");
+
+  // 悬停读数：取最近一次采样（保持到下一次变化），不插值 —— 插值会造出没采样到的数字
+  assert.equal(quotaUsedAt([[1, 10], [3, 30]], 2), 10);
+  assert.equal(quotaUsedAt([[1, 10], [3, 30]], 3), 30);
+  assert.equal(quotaUsedAt([[1, 10]], 0), null, "第一个采样之前没有读数");
+  assert.equal(quotaUsedAt([["x", 1], [2, NaN]], 5), null, "坏点不算读数");
+  assert.equal(clockOf(new Date(2026, 9, 27, 8, 5).getTime()), "10-27 08:05");
 
   // 图例：名称取当前条目的短标签，剩余 = 100 − 最后一个 pct；没有样本的指标不出现
   const entries = [{ key: "window.5h", short: "5h" }, { key: "window.weekly", name: "周用量" }];

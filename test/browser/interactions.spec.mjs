@@ -344,6 +344,21 @@ test("the card head opens statistics where token bars and remaining-quota lines 
   await mkdir(statsDirectory, { recursive: true });
   await page.screenshot({ path: resolve(statsDirectory, "stats-combined-chart.png"), fullPage: true });
 
+  // 线上的形状不给数字：悬停把那一刻的读数放进浮层（最近一次采样，不插值），并落一条十字线
+  const box = await plot.boundingBox();
+  await page.mouse.move(box.x + box.width * 0.94, box.y + box.height / 2);
+  const tip = dialog.locator(".qm-chart-tip");
+  await expect(tip).toBeVisible();
+  await expect(tip).toContainText("剩余");
+  await expect(tip).toContainText("3.15M token");
+  await expect(plot.locator(".qm-chart-cursor")).toHaveCount(1);
+  // 采样点各有一枚锚点；5h 用满后重置，两段之间用虚线接上（不是画漏了）
+  await expect(plot.locator(".qm-chart-dot")).toHaveCount(6);
+  await expect(plot.locator(".qm-chart-drop")).toHaveCount(1);
+  await page.screenshot({ path: resolve(statsDirectory, "stats-hover-readout.png"), fullPage: true });
+  await page.mouse.move(0, 0);
+  await expect(tip).toHaveCount(0);
+
   // Escape 关闭后焦点回到打开它的标题行（不是监控条）
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
