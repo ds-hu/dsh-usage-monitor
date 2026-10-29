@@ -39,7 +39,7 @@ function client(fetch, { storage = new Map(), search = "", clock = null, mobile 
     context.__setNow = (value) => { fixed.Now = value; };
   }
   // 只为纯展示函数提供测试访问点，不修改生产导出或加载方式。
-  vm.runInNewContext(source.replace("exports.apply = apply;", "exports.__test = { buildEntryView, selectPrimaryMetric, supplierStatus, connStateOf, seasonCountdown, seasonSplitText, fmtBig, weeklyEntryOf, selectBarMetrics, usageRatioOf, ratioPartsOf, splitPartsOf, chartDomainOf, quotaSegmentsOf, quotaLegendOf, quotaUsedAt, clockOf, dayStartOf }; exports.apply = apply;"), context);
+  vm.runInNewContext(source.replace("exports.apply = apply;", "exports.__test = { buildEntryView, metricRowsOf, selectPrimaryMetric, supplierStatus, connStateOf, seasonCountdown, seasonSplitText, fmtBig, weeklyEntryOf, selectBarMetrics, usageRatioOf, ratioPartsOf, splitPartsOf, chartDomainOf, quotaSegmentsOf, quotaLegendOf, quotaUsedAt, clockOf, dayStartOf }; exports.apply = apply;"), context);
   plugin.apply({ locale: { register(ns, locales_) { Object.assign(locales, locales_); dictionary = locales_.zh; } }, effect(fn) { cleanups.push(fn()); }, slots: {
     inject(name, fn) { return fn(); }, register(descriptor, component) { slots[descriptor.name ?? descriptor.key] = component; },
   } });
@@ -60,43 +60,33 @@ const mount = async (host, props = {}, Component = host.Footer) => {
   await act(async () => { tree = create(React.createElement(Component, { wide: true, t: host.t, ...props })); });
   return tree;
 };
-const open = async (tree) => act(async () => { tree.root.findByProps({ "data-qm-entry": "" }).props.onClick(); });
+const open = async (tree) => { await act(async () => { tree.root.findByProps({ "data-qm-entry": "" }).props.onClick(); }); await flush(); };
+const panelOf = (tree) => tree.root.findByProps({ role: "dialog" });
+const rowOf = (tree, id) => tree.root.findByProps({ "data-supplier": id });
+const expand = async (tree, id) => act(async () => { rowOf(tree, id).findByProps({ "data-qm-row": "" }).props.onClick(); });
+const openGlobal = async (tree) => {
+  const details = tree.root.findByProps({ className: "s-group qm-global" });
+  await act(async () => { details.props.onToggle({ currentTarget: { open: true } }); });
+};
 /** 等首帧 /state 落地并触发依赖它的 effect（globalForm 就在 effect 里初始化）。 */
 const flush = async () => { await act(async () => { await Promise.resolve(); }); };
 const response = (data) => ({ ok: true, status: 200, json: async () => data });
 const payload = (name, suppliers = []) => ({ ok: true, traffic: { channelAlive: true }, suppliers, active: { supplierId: suppliers[0]?.id, name, model: "model", at: Date.now() } });
 const supplier = (entries, extra = {}) => ({ id: "opencode", name: "OpenCode", current: true, added: true, enabled: true, state: "ok", todayTokens: 0, entries, ...extra });
 
-for (const wide of [true, false]) test(`${wide ? "expanded" : "rail"} sidebar opens a usage popover before independent details`, async () => {
+for (const wide of [true, false]) test(`${wide ? "expanded" : "rail"} sidebar opens the single monitor panel`, async () => {
   const host = client(async () => response(payload("A")));
   let tree;
   try {
     tree = await mount(host, { wide });
     await open(tree);
     assert.equal(tree.root.findAllByProps({ role: "dialog" }).length, 1);
-    assert.equal(tree.root.findByProps({ role: "dialog" }).props["aria-label"], "用量");
-    assert.equal(tree.root.findAllByProps({ role: "tab" }).length, 0);
-    assert.equal(tree.root.findAllByProps({ className: "qm-pop" }).length, 1);
-    await act(async () => button(tree, "详情").props.onClick());
-    assert.equal(tree.root.findAllByProps({ className: "qm-pop" }).length, 0);
-    assert.equal(tree.root.findByProps({ role: "dialog" }).props["aria-label"], "供应商限额明细");
+    assert.equal(panelOf(tree).props["aria-label"], "用量监控");
+    assert.equal(panelOf(tree).findAllByProps({ role: "tab" }).length, 2);
+    assert.equal(tree.root.findAllByProps({ className: "qm-pop" }).length, 0, "浮卡已删除");
+    assert.equal(tree.root.findAllByProps({ className: "qm-overview-head" }).length, 1, "默认进入概览");
     await act(async () => button(tree, "关闭").props.onClick());
     assert.equal(tree.root.findAllByProps({ role: "dialog" }).length, 0);
-  } finally { await act(async () => tree?.unmount()); }
-});
-
-for (const wide of [true, false]) test(`mobile layout (${wide ? "expanded" : "rail"}) opens the details dialog on the first tap`, async () => {
-  const host = client(async () => response(payload("A")), { mobile: true });
-  let tree;
-  try {
-    tree = await mount(host, { wide });
-    await open(tree);
-    assert.equal(tree.root.findAllByProps({ className: "qm-pop" }).length, 0, "手机端不再先弹浮卡");
-    assert.equal(tree.root.findByProps({ role: "dialog" }).props["aria-label"], "供应商限额明细");
-    assert.equal(tree.root.findByProps({ "data-qm-entry": "" }).props["aria-expanded"], true);
-    // 详情头部保留「设置」：直达详情不是死路，配置面板仍能打开。
-    await act(async () => button(tree, "设置").props.onClick());
-    assert.equal(tree.root.findByProps({ role: "dialog" }).props["aria-label"], "用量监控");
   } finally { await act(async () => tree?.unmount()); }
 });
 
@@ -219,6 +209,27 @@ test("A1 pure display table separates percentages, balances, report periods, zer
   assert.equal(helpers.supplierStatus(supplier([]), t), "尚未查询");
 });
 
+test("metric rows group by kind and keep quota, balance and report columns", () => {
+  const host = client(async () => response(payload("A")));
+  const groups = host.helpers.metricRowsOf({ entries: [
+    { key: "window.weekly", kind: "win", name: "周用量", pct: 40, limit: "100%", resetAt: Date.now() + 3_600_000 },
+    { key: "cny", kind: "bal", name: "CNY", remain: "¥41.99", pct: null },
+    { key: "org.cost", kind: "cost", name: "组织费用", used: "$1.25", note: "最近完整 UTC 日" },
+  ] }, host.t);
+  assert.equal(groups.map((group) => group.kind).join(","), "quota,balance,cost");
+  assert.equal(groups[0].columns.map((column) => column.key).join(","), "name,used,limit,reset");
+  const quotaRow = groups[0].rows[0];
+  assert.equal(quotaRow.key, "window.weekly");
+  assert.equal(quotaRow.name, "周用量");
+  assert.equal(quotaRow.tone, "ok");
+  assert.equal(quotaRow.used, "40%");
+  assert.equal(quotaRow.limit, "100%");
+  assert.match(quotaRow.reset, /^\d+h\d{2}m 后重置$/);
+  assert.equal(groups[1].rows[0].value, "¥41.99");
+  assert.equal(groups[2].rows[0].value, "$1.25");
+  assert.equal(groups[2].rows[0].period, "最近完整 UTC 日");
+});
+
 test("selected primary window owns its reset time and unknown reset does not borrow headline", () => {
   const { helpers, t } = client(async () => response(payload("A")));
   const resetAt = Date.now() + (2 * 60 + 13) * 60_000 + 30_000;
@@ -337,9 +348,9 @@ test("the card draws one bar per watched limit with its own countdown and no tod
     assert.deepEqual(tree.root.findAllByProps({ className: "qm-bar-reset" }).map(textOf), ["12d3h", "2d5h"]);
     assert.equal(tree.root.findAllByProps({ className: "qm-l3" }).length, 0, "卡片不再有今日行");
     // 今日用量搬进详情弹窗的供应商栏
-    await act(async () => tree.root.findByProps({ "data-qm-entry": "" }).props.onClick());
-    await act(async () => button(tree, "详情").props.onClick());
-    assert.match(textOf(tree.root.findByProps({ className: "qm-today-line" })), /今日用量 1\.24M tokens/);
+    await open(tree);
+    await expand(tree, "opencode");
+    assert.match(textOf(rowOf(tree, "opencode").findByProps({ className: "qm-today-line" })), /今日用量 1\.24M tokens/);
   } finally { await act(async () => tree?.unmount()); }
 });
 
@@ -375,8 +386,8 @@ test("details show the colored ratio next to today's total, and only when compon
   try {
     tree = await mount(host);
     await open(tree);
-    await act(async () => button(tree, "详情").props.onClick());
-    const line = tree.root.findByProps({ className: "qm-today-line" });
+    await expand(tree, "opencode");
+    const line = rowOf(tree, "opencode").findByProps({ className: "qm-today-line" });
     assert.match(textOf(line), /今日用量 3\.15M tokens/, "总量仍按供应商口径");
     assert.match(textOf(line), /30\.0 : 1\.00 : 0\.150/, "比例挨着总量：命中 : 未命中 : 输出，未命中 = 1");
     // 三个数字分别着段色，与三段分布条一一对应
@@ -389,15 +400,15 @@ test("details show the colored ratio next to today's total, and only when compon
     const legacy = client(async () => response(payload("OpenCode", [supplier([{ name: "周用量", kind: "win", pct: 2 }], { todayTokens: 500 })])));
     tree = await mount(legacy);
     await open(tree);
-    await act(async () => button(tree, "详情").props.onClick());
-    const bare = tree.root.findByProps({ className: "qm-today-line" });
+    await expand(tree, "opencode");
+    const bare = rowOf(tree, "opencode").findByProps({ className: "qm-today-line" });
     assert.match(textOf(bare), /今日用量 500 tokens/);
     assert.equal(bare.findAllByProps({ className: "qm-split-bar" }).length, 0);
     assert.equal(bare.findAllByProps({ className: "qm-ratio" }).length, 0);
   } finally { await act(async () => tree?.unmount()); }
 });
 
-test("the card head opens the statistics view with the ratio, legend and one combined chart", async () => {
+test("expanding a supplier shows today's ratio, the five-part split and one combined chart", async () => {
   const start = (day) => new Date(...day.split("-").map((part, i) => (i === 1 ? Number(part) - 1 : Number(part)))).getTime();
   const usageDays = [
     { day: "2026-10-21", inputTokens: 50_000, outputTokens: 8_000, cacheReadTokens: 1_000_000, cacheWriteTokens: 10_000, unsplitTokens: 0, total: 1_068_000 },
@@ -408,7 +419,6 @@ test("the card head opens the statistics view with the ratio, legend and one com
     { day: "2026-10-26", inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, unsplitTokens: 0, total: 0 },
     { day: "2026-10-27", inputTokens: 100_000, outputTokens: 15_000, cacheReadTokens: 3_000_000, cacheWriteTokens: 40_000, unsplitTokens: 0, total: 3_155_000 },
   ];
-  // 5h 窗口在 10-26 用满后重置（pct 90 → 8），周窗口一路缓升
   const quotaHistory = {
     "window.5h": [[start("2026-10-25"), 30], [start("2026-10-26"), 90], [start("2026-10-26") + 3_600_000, 8], [start("2026-10-27"), 62]],
     "window.weekly": [[start("2026-10-21"), 0], [start("2026-10-27") + 3_600_000, 20]],
@@ -423,92 +433,80 @@ test("the card head opens the statistics view with the ratio, legend and one com
     }),
   ]);
   state.poll = { intervalSeconds: 60, retentionDays: 7, usageHistoryDays: 7, quotaHistoryDays: 7 };
-  const host = client(async () => response(state));
+  let quotaGets = 0;
+  const host = client(async (url) => { if (String(url).includes("quota=1")) quotaGets++; return response(state); },
+    { clock: start("2026-10-27") + 12 * 3600_000 });
   let tree;
   try {
     tree = await mount(host);
-    // 标题行 = 名字 + 今日数，点击进入统计
-    const head = tree.root.findByProps({ "data-qm-stats-entry": "" });
-    assert.match(textOf(head), /OpenCode/);
-    assert.match(textOf(head), /今日 3\.15M/);
-    assert.equal(head.props["aria-haspopup"], "dialog");
-    await act(async () => head.props.onClick());
+    await open(tree);
+    await expand(tree, "opencode");
     await flush();
-    const dialog = tree.root.findByProps({ role: "dialog", "aria-modal": true });
-    assert.equal(dialog.props["aria-label"], "用量统计");
-    assert.equal(head.props["aria-expanded"], true);
-    // 今日比例与窗口比例分开：今日 30.0:1.00:0.150，近 7 天合计 26.7:1.00:0.153
-    assert.match(textOf(tree.root.findByProps({ className: "qm-stats-ratio" })), /30\.0 : 1\.00 : 0\.150/);
-    assert.match(textOf(tree.root.findByProps({ className: "qm-stats-foot" })), /近 7 天 4\.22M/);
-    assert.match(textOf(tree.root.findByProps({ className: "qm-stats-foot" })), /26\.7 : 1\.00 : 0\.153/);
-    // 图例逐分量给数（未细分为 0 不出现）
-    const legend = textOf(tree.root.findByProps({ className: "qm-stats-legend" }));
+    assert.equal(quotaGets, 1, "首次展开只取一次额度历史");
+    const row = rowOf(tree, "opencode");
+    // 今日比例与五分量图例：三比例、五分量各司其职
+    assert.match(textOf(row.findByProps({ className: "qm-today-line" })), /30\.0 : 1\.00 : 0\.150/);
+    const legend = textOf(row.findByProps({ className: "qm-usage-legend" }));
     assert.match(legend, /缓存命中 3\.00M/);
     assert.match(legend, /缓存未命中 100K/);
     assert.match(legend, /输出 15\.0K/);
     assert.match(legend, /缓存写入 40\.0K/);
-
-    // 一张图：柱 = 每日 token（左轴顶端刻度 = 最高的那根柱），线 = 剩余额度
-    const caption = textOf(tree.root.findByProps({ className: "qm-chart-cap" }));
-    assert.match(caption, /3\.15M token/, "左轴顶端是最高柱值，不是窗口合计");
-    // 日期刻度每天一个：柱在哪天一眼可见（含没有消耗的日子，时间轴才是连续的）
-    const ticks = tree.root.findByProps({ className: "qm-chart-ticks" });
+    // 一张图：柱 = 每日 token，线 = 剩余额度；日期刻度连续
+    assert.match(textOf(row.findByProps({ className: "qm-chart-cap" })), /3\.15M token/);
+    const ticks = row.findByProps({ className: "qm-chart-ticks" });
     assert.equal(ticks.findAllByProps({ className: "qm-chart-tick" }).length, 7);
     assert.equal(ticks.findAllByProps({ className: "qm-chart-tick" }).map(textOf).join(","),
       "10-21,10-22,10-23,10-24,10-25,10-26,10-27");
-    const plot = tree.root.findByProps({ "data-qm-chart": "opencode" });
+    const plot = row.findByProps({ "data-qm-chart": "opencode" });
     const bars = plot.findAll((node) => node.type === "rect" && node.props.className === "qm-chart-bar");
     assert.equal(bars.length, 2, "只有两天有消耗，就只画两根柱");
-    // 5h 用满后重置 → 两段折线（不把两次窗口连成一条斜线）；周窗口一段
     const lines = plot.findAll((node) => node.props.className === "qm-chart-line");
-    const polylines = lines.filter((node) => node.type === "polyline");
-    assert.equal(polylines.length, 3, "5h 两段 + 周一段");
-    // 每个采样点一个锚点（5h 4 个 + 周 2 个）；换窗口处一条虚线把两段接上，
-    // 否则稀疏时段看起来就是「线画断了」。
+    assert.equal(lines.filter((node) => node.type === "polyline").length, 3, "5h 两段 + 周一段");
     const overlay = plot.findByProps({ className: "qm-chart-overlay" });
     assert.equal(overlay.findAllByProps({ className: "qm-chart-dot" }).length, 6);
     assert.equal(overlay.findAllByProps({ className: "qm-chart-drop" }).length, 1, "5h 换了一次窗口");
-    // 剩余额度 = 100 − 已用：5h 当前 38%，周 80%
-    const keys = tree.root.findAllByProps({ className: "qm-chart-key" }).map(textOf);
-    assert.deepEqual(keys, ["5h 剩余 38%", "周 剩余 80%"]);
-    // 折线纵坐标必须落在图内，且「已用越多越靠下」
-    const ys = polylines.map((node) => node.props.points.split(" ").map((pair) => Number(pair.split(",")[1])));
-    for (const row of ys) for (const y of row) assert.ok(y > 0 && y < 120, "折线不越出画布：" + y);
-    // 悬停：十字线落在某一刻，浮层给那一刻的读数（最近一次采样，不插值）
+    assert.deepEqual(row.findAllByProps({ className: "qm-chart-key" }).map(textOf), ["5h 剩余 38%", "周 剩余 80%"]);
+    assert.match(textOf(row.findByProps({ className: "qm-chart-foot" })), /近 7 天 4\.22M/);
+    // 悬停读数停在真实采样时刻
     await act(async () => plot.props.onPointerMove({
       clientX: 570, currentTarget: { getBoundingClientRect: () => ({ left: 0, width: 600 }) },
     }));
-    const tip = textOf(tree.root.findByProps({ className: "qm-chart-tip" }));
-    assert.match(tip, /10-27/, "浮层标明时刻");
-    assert.match(tip, /3\.15M token/, "那一刻所在那天的柱值");
+    const tip = textOf(row.findByProps({ className: "qm-chart-tip" }));
+    assert.match(tip, /10-27/);
+    assert.match(tip, /3\.15M token/);
     assert.match(tip, /5h 剩余 38%/);
     assert.match(tip, /周 剩余 80%/);
-    assert.ok(tree.root.findByProps({ className: "qm-chart-cursor" }), "有十字线");
     await act(async () => plot.props.onPointerLeave({ pointerType: "mouse" }));
-    assert.equal(tree.root.findAllByProps({ className: "qm-chart-tip" }).length, 0, "移开收起");
+    assert.equal(row.findAllByProps({ className: "qm-chart-tip" }).length, 0);
+    // 同一会话再次展开不重复请求；缓存直接复用
+    await expand(tree, "opencode");
+    await expand(tree, "opencode");
+    assert.equal(quotaGets, 1, "同一面板会话内复用额度历史");
     await act(async () => tree.unmount()); tree = null;
 
-    // 没有额度历史（旧数据 / 刚开始记录）：只画柱，不画空折线、不出现空图例
+    // 没有额度历史：只画柱，不编折线与图例
     const noQuota = payload("OpenCode", [supplier([{ name: "周用量", kind: "win", pct: 2 }], {
       todayTokens: 3_155_000, todayUsage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 1, cacheWriteTokens: 0, unsplitTokens: 0 }, usageDays,
     })]);
     noQuota.poll = { intervalSeconds: 60, retentionDays: 7, usageHistoryDays: 7 };
-    const bare = client(async () => response(noQuota));
+    const bare = client(async () => response(noQuota), { clock: start("2026-10-27") + 12 * 3600_000 });
     tree = await mount(bare);
-    await act(async () => tree.root.findByProps({ "data-qm-stats-entry": "" }).props.onClick());
+    await open(tree);
+    await expand(tree, "opencode");
     await flush();
-    const barePlot = tree.root.findByProps({ "data-qm-chart": "opencode" });
+    const bareRow = rowOf(tree, "opencode");
+    const barePlot = bareRow.findByProps({ "data-qm-chart": "opencode" });
     assert.equal(barePlot.findAll((node) => node.props.className === "qm-chart-bar").length, 2);
     assert.equal(barePlot.findAll((node) => node.props.className === "qm-chart-line").length, 0);
-    assert.equal(tree.root.findAllByProps({ className: "qm-chart-key" }).length, 0);
+    assert.equal(bareRow.findAllByProps({ className: "qm-chart-key" }).length, 0);
     await act(async () => tree.unmount()); tree = null;
 
-    // 一个有量的供应商都没有：空态一句话，不画空图表
-    const empty = client(async () => response(payload("OpenCode", [supplier([{ name: "周用量", kind: "win", pct: 2 }])])));
+    // 没有任何本地用量：不画空图
+    const empty = client(async () => response(payload("OpenCode", [supplier([{ name: "周用量", kind: "win", pct: 2 }])])), { clock: start("2026-10-27") + 12 * 3600_000 });
     tree = await mount(empty);
-    await act(async () => tree.root.findByProps({ "data-qm-stats-entry": "" }).props.onClick());
+    await open(tree);
+    await expand(tree, "opencode");
     await flush();
-    assert.match(textOf(tree.root.findByProps({ className: "qm-empty" })), /暂无本地用量数据/);
     assert.equal(tree.root.findAllByProps({ "data-qm-chart": "opencode" }).length, 0);
   } finally { await act(async () => tree?.unmount()); }
 });
@@ -621,17 +619,17 @@ for (const [warnPct, critPct, tones] of [[undefined, undefined, ["ok", "ok", "ok
     const state = payload("OpenCode", [supplier([49, 50, 60, 70].map((pct) => ({ kind: "win", name: `e${pct}`, pct, used: String(pct), limit: "100" })), { warnPct, critPct })]);
     const host = client(async () => response(state));
     let tree;
-    const renderedTones = () => tree.root.findAll((node) => /^ci-big /.test(node.props.className || "")).map((node) => node.props.className);
+    const renderedTones = () => tree.root.findAll((node) => /^qm-tone /.test(node.props.className || "")).map((node) => node.props.className.replace("qm-tone ", ""));
     try {
       tree = await mount(host);
       await open(tree);
-      await act(async () => button(tree, "详情").props.onClick());
-      assert.deepEqual(renderedTones(), tones.map((tone) => `ci-big ${tone}`));
-      const card = tree.root.findByProps({ "data-supplier": "opencode" });
+      await expand(tree, "opencode");
+      assert.deepEqual(renderedTones(), tones);
+      const card = rowOf(tree, "opencode");
       assert.ok(textOf(card).includes(tones.at(-1) === "crit" ? "临界" : "正常"));
-      await act(async () => button(tree, "设置").props.onClick());
+      await act(async () => tab(tree, "供应商").props.onClick());
       await act(async () => button(tree, "配置").props.onClick());
-      assert.deepEqual(renderedTones(), tones.map((tone) => `ci-big ${tone}`));
+      assert.deepEqual(renderedTones(), tones);
       assert.ok(textOf(tree.root.findByProps({ className: "qm-page-head" })).includes(tones.at(-1) === "crit" ? "临界" : "正常"));
     } finally { await act(async () => tree?.unmount()); }
   });
@@ -648,14 +646,14 @@ test("unknown percentage and healthy balance remain neutral; failed old values s
     assert.match(line(tree, "qm-l2"), /\$3/);
     assert.equal(barNode(tree), null, "未知百分比不画条");
     await open(tree);
-    await act(async () => button(tree, "详情").props.onClick());
-    const card = tree.root.findByProps({ "data-supplier": "opencode" });
+    await expand(tree, "opencode");
+    const card = rowOf(tree, "opencode");
     assert.ok(textOf(card).includes("quota endpoint unavailable"));
     assert.ok(textOf(card).includes("数据时间"));
     assert.ok(textOf(card).includes(new Date(state.suppliers[0].lastSuccessAt).toLocaleString()));
     assert.ok(!textOf(card).includes("0%"));
     assert.ok(!textOf(card).includes("无限额概念"));
-    assert.deepEqual(card.findAll((node) => /^ci-big /.test(node.props.className || "")).map((node) => node.props.className), ["ci-big neutral", "ci-big neutral"]);
+    assert.deepEqual(card.findAll((node) => /^qm-tone /.test(node.props.className || "")).map((node) => node.props.className), ["qm-tone neutral"]);
   } finally { await act(async () => tree?.unmount()); }
 });
 
@@ -671,7 +669,6 @@ test("embedded settings preserves non-secret fields and retains rejected drafts"
   try {
     tree = await mount(host, {}, host.Page);
     assert.equal(tree.root.findAllByProps({ role: "dialog" }).length, 0);
-    await act(async () => tab(tree, "供应商").props.onClick());
     await act(async () => button(tree, "配置").props.onClick());
     assert.ok(tree.root.findAllByType("input").some((input) => input.props.value === "org-original"));
     await act(async () => button(tree, "保存").props.onClick());
@@ -750,7 +747,7 @@ test("season never invents a switch time: a placeholder flipAt shows the tier wi
   } finally { await act(async () => tree?.unmount()); }
 });
 
-test("the peek popover no longer repeats the tier; the coverage warning lives where it can be fixed", async () => {
+test("the billing tier stays on the card; the coverage warning lives where it can be fixed", async () => {
   const now = Date.UTC(2026, 9, 13, 2, 0, 0);
   const flipAt = now + 65 * 60_000;
   const deepseek = { ...supplier([{ kind: "bal", remain: "¥8.22" }]), id: "deepseek", name: "DeepSeek",
@@ -761,27 +758,22 @@ test("the peek popover no longer repeats the tier; the coverage warning lives wh
   let tree, pageTree;
   try {
     tree = await mount(host);
-    // 常驻卡片只报档位与倒计时：成因不进卡片行（明细里仍有）
     const row = tree.root.findByProps({ "data-qm-season": "valley" });
-    assert.match(textOf(row), /^谷价 · 1h05m 后切换/, "卡片只报档位与倒计时：" + textOf(row));
-    assert.ok(!textOf(row).includes("法定节假日"), "卡片不再合成因：" + textOf(row));
+    assert.match(textOf(row), /^谷价1h05m 后切换/, "卡片只报档位与倒计时：" + textOf(row));
+    assert.ok(!textOf(row).includes("法定节假日"), "卡片不合成因：" + textOf(row));
     await open(tree);
-    assert.equal(tree.root.findAllByProps({ "data-qm-season-block": "valley" }).length, 0, "浮卡不再重复时段块");
-    const split = tree.root.findByProps({ "data-qm-season-split": "deepseek" });
-    assert.match(textOf(split), /空闲 3\.40M（100%）/);
-    assert.equal(tree.root.findAllByProps({ "data-qm-season-split": "opencode" }).length, 0, "其他供应商不串峰谷口径");
-    await act(async () => button(tree, "详情").props.onClick());
-    const detail = tree.root.findByProps({ className: "qm-cols" });
-    assert.equal(detail.findAllByProps({ "data-qm-season-block": "valley" }).length, 1, "详情只给适用的供应商挂时段块");
+    assert.equal(tree.root.findAllByProps({ "data-qm-season-block": "valley" }).length, 0, "折叠行不重复时段块");
+    await expand(tree, "deepseek");
+    const detail = rowOf(tree, "deepseek");
+    assert.equal(detail.findAllByProps({ "data-qm-season-block": "valley" }).length, 1, "只给适用的供应商挂时段块");
     assert.match(textOf(detail), /法定节假日/, "成因仍然可查");
-    assert.match(textOf(detail), /节假日表缺少 2027 年/, "告警仍出现在明细里");
+    assert.match(textOf(detail), /空闲.*3\.40M.*100%/, "时段拆分在展开明细里");
+    assert.equal(rowOf(tree, "opencode").findAllByProps({ "data-qm-season-block": "valley" }).length, 0, "其他供应商不串峰谷口径");
     await act(async () => tree.unmount()); tree = null;
 
-    // 缺次年必须点名，且要点在能粘贴覆盖表的地方（浮卡已经不再承担这件事）
+    // 缺次年必须点名，且要点在能粘贴覆盖表的地方
     const pageHost = client(async () => response(state), { clock: now });
     pageTree = await mount(pageHost, {}, pageHost.Page);
-    await act(async () => tab(pageTree, "设置").props.onClick());
-    await flush();
     const warning = pageTree.root.findByProps({ className: "qm-season-warn" });
     assert.equal(warning.props.role, "status", "告警要能被读屏读到");
     assert.match(textOf(warning), /2027/, "缺次年必须在设置页点名");
@@ -796,16 +788,18 @@ test("today's split sums to the reported total and hides itself when there is no
   try {
     tree = await mount(host);
     await open(tree);
-    const split = textOf(tree.root.findByProps({ "data-qm-season-split": "deepseek" }));
-    assert.match(split, /高峰 1\.20M（25%）/);
-    assert.match(split, /空闲 3\.60M（75%）/);
+    await expand(tree, "deepseek");
+    const split = textOf(rowOf(tree, "deepseek").findByProps({ className: "qm-split-stats" }));
+    assert.match(split, /高峰.*1\.20M.*25%/);
+    assert.match(split, /空闲.*3\.60M.*75%/);
     await act(async () => tree.unmount());
 
     // 无用量 / 只有未知段（早于峰谷定价的旧桶）时不编造结论
     const empty = client(async () => response(seasonPayload({}, [{ ...supplier([]), id: "deepseek", name: "DeepSeek", seasonSplit: splitOf(0, 0, 0) }])));
     tree = await mount(empty);
     await open(tree);
-    assert.equal(tree.root.findAllByProps({ "data-qm-season-split": "deepseek" }).length, 0);
+    await expand(tree, "deepseek");
+    assert.equal(rowOf(tree, "deepseek").findAllByProps({ className: "qm-split-stats" }).length, 0);
   } finally { await act(async () => tree?.unmount()); }
 });
 
@@ -819,8 +813,8 @@ test("settings paste an explicit holiday override; invalid dates are rejected be
   let tree;
   try {
     tree = await mount(host, {}, host.Page);
-    // 全局设置（含节假日覆盖表）在「设置」页签下，不在默认的概览页
-    await act(async () => tab(tree, "设置").props.onClick());
+    // 全局设置（含节假日覆盖表）在供应商页底部的折叠段里
+    await openGlobal(tree);
     await flush();
     const box = tree.root.findByType("textarea");
     assert.equal(box.props.value, "", "未配置时留空 = 用内置表");

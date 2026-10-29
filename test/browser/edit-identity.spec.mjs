@@ -22,6 +22,13 @@ async function openSupplier(page, dialog, name) {
   await expect(dialog.locator(".qm-page-head")).toContainText(name);
 }
 
+/** 展开供应商页底部的全局设置折叠段。 */
+async function openGlobal(panel) {
+  const details = panel.locator("details.qm-global");
+  if (!(await details.evaluate((el) => el.open))) await details.locator("summary").click();
+  await expect(panel.locator('input[type="number"][min="10"]')).toBeVisible();
+}
+
 const BASE = "http://127.0.0.1:4179";
 const control = (request, body) =>
   request.post(`${BASE}/__control`, { data: body }).then((r) => r.json());
@@ -130,24 +137,21 @@ test("自定义阈值在详情卡与设置页预览使用同一判定", async ({
 
   const dialog = await openSettings(page);
   await openSupplier(page, dialog, "OpenCode");
-  const tones = () => dialog.locator(".qm-quota-preview .ci-big").evaluateAll((nodes) => nodes.map((n) => n.className));
+  const tones = () => dialog.locator(".qm-quota-preview .qm-tone").evaluateAll((nodes) => nodes.map((n) => n.className));
   // 设置页预览 = 已保存配置（50/70）对应的查询结果
-  await expect.poll(tones).toEqual(["ci-big ok", "ci-big warn", "ci-big crit"]);
+  await expect.poll(tones).toEqual(["qm-tone ok", "qm-tone warn", "qm-tone crit"]);
   // 状态药丸与预览同口径（最高 80 ≥ crit 70 → 临界）
   await expect(dialog.locator(".qm-page-head .qm-pill")).toHaveText("临界");
 
-  // 独立详情弹窗与设置页预览共用同一份阈值判定。
-  await page.locator("[data-qm-entry]").click();
-  await page.locator(".qm-pop").getByRole("button", { name: "详情", exact: true }).click();
-  const detail = page.getByRole("dialog", { name: "供应商限额明细", exact: true }).locator('.qm-col[data-supplier="opencode"]');
-  await expect(detail).toBeVisible();
-  await expect(page.getByRole("dialog")).toHaveCount(1);
-  const detailTones = await detail.locator(".qm-card-item .ci-big").evaluateAll((nodes) => nodes.map((n) => n.className));
-  expect(detailTones).toContain("ci-big ok");   // 49 < 50
-  expect(detailTones).toContain("ci-big warn"); // 50 ≤ 60 < 70
-  expect(detailTones).toContain("ci-big crit"); // 80 ≥ 70
-  // 详情页的状态药丸与预览同口径
-  await expect(detail.locator(".qm-pill")).toHaveText("临界");
+  // 概览展开行与设置页预览共用同一份阈值判定。
+  await dialog.getByRole("tab", { name: "概览", exact: true }).click();
+  const row = dialog.locator('.qm-row[data-supplier="opencode"]');
+  await row.locator("[data-qm-row]").click();
+  await expect(row.locator(".qm-row-detail")).toBeVisible();
+  const detailTones = await row.locator(".qm-tone").evaluateAll((nodes) => nodes.map((n) => n.className));
+  expect(detailTones).toEqual(["qm-tone ok", "qm-tone warn", "qm-tone crit"]);
+  // 概览行的状态药丸与预览同口径
+  await expect(row.locator(".qm-pill")).toHaveText("临界");
 });
 
 test("页签切换和背景重载保留草稿，明确放弃后才丢弃", async ({ page, request }) => {
@@ -157,7 +161,6 @@ test("页签切换和背景重载保留草稿，明确放弃后才丢弃", async
   await panel.getByLabel("API Key", { exact: true }).fill("sk-private-draft");
   await panel.getByRole("tab", { name: "概览", exact: true }).click();
   await panel.getByRole("button", { name: "刷新", exact: true }).click();
-  await panel.getByRole("tab", { name: "设置", exact: true }).click();
   await panel.getByRole("tab", { name: "供应商", exact: true }).click();
   await expect(panel.getByLabel("org id（可选）", { exact: true })).toHaveValue("unsaved-organization");
   await expect(panel.getByLabel("API Key", { exact: true })).toHaveValue("sk-private-draft");
@@ -187,14 +190,13 @@ test("留空密钥保存非秘密字段时保留已保存密钥", async ({ page,
 
 test("全局保存的迟到回调不得解锁供应商保存；供应商完成后可保存全局配置", async ({ page, request }) => {
   const panel = await openSettings(page);
-  await panel.getByRole("tab", { name: "设置", exact: true }).click();
+  await openGlobal(panel);
   const interval = panel.locator('input[type="number"][min="10"]');
   await interval.fill("120");
   await control(request, { settingsDelay: 1500 });
   const globalCompleted = page.waitForResponse((response) => response.url().endsWith(`${API}/settings`) && response.request().postDataJSON()?.intervalSeconds === 120);
   await panel.getByRole("button", { name: "保存", exact: true }).click();
-  await panel.getByRole("tab", { name: "概览", exact: true }).click();
-  await panel.locator('.qm-supplier-card[data-supplier="opencode"]').getByRole("button", { name: "配置", exact: true }).click();
+  await openSupplier(page, panel, "OpenCode");
   const org = panel.getByLabel("org id（可选）", { exact: true });
   await org.fill("supplier-after-global");
   await control(request, { settingsDelay: 3500 });
@@ -210,9 +212,9 @@ test("全局保存的迟到回调不得解锁供应商保存；供应商完成�
   await save.evaluate((button) => button.click());
   expect((await control(request, {})).postCount).toBe(2);
   await supplierCompleted;
-  await expect(panel.locator(".qm-overview-grid")).toBeVisible();
+  await expect(panel.locator(".qm-page-list")).toBeVisible();
   await control(request, { settingsDelay: 0 });
-  await panel.getByRole("tab", { name: "设置", exact: true }).click();
+  await openGlobal(panel);
   await interval.fill("121");
   const finalSave = page.waitForResponse((response) => response.url().endsWith(`${API}/settings`) && response.request().postDataJSON()?.intervalSeconds === 121);
   await panel.getByRole("button", { name: "保存", exact: true }).click();
@@ -225,7 +227,6 @@ test("全局保存的迟到回调不得解锁供应商保存；供应商完成�
 for (const rejected of [false, true]) test(`保存${rejected ? "失败" : "成功"}时原生页接管保留保存锁与草稿身份`, async ({ page, request }) => {
   await page.goto("/");
   await page.locator("[data-qm-entry]").click();
-  await page.locator(".qm-pop").getByRole("button", { name: "设置", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "用量监控", exact: true });
   await openSupplier(page, dialog, "OpenCode");
   await dialog.getByLabel("org id（可选）", { exact: true }).fill("native-takeover-draft");
@@ -262,7 +263,6 @@ test("关闭在途保存后重开等候服务端实际状态，不复用旧缓�
   await page.goto("/");
   const opener = page.locator("[data-qm-entry]");
   await opener.click();
-  await page.locator(".qm-pop").getByRole("button", { name: "设置", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "用量监控", exact: true });
   await openSupplier(page, dialog, "OpenCode");
   await dialog.getByLabel("org id（可选）", { exact: true }).fill("saved-after-close");
@@ -273,12 +273,10 @@ test("关闭在途保存后重开等候服务端实际状态，不复用旧缓�
   await dialog.getByRole("alertdialog").getByRole("button", { name: "放弃修改", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await opener.click();
-  await page.locator(".qm-pop").getByRole("button", { name: "设置", exact: true }).click();
   await expect(dialog).toBeVisible();
   await expect(dialog.getByLabel("org id（可选）", { exact: true })).toHaveCount(0);
-  await expect(dialog.locator(".qm-supplier-card")).toHaveCount(0);
+  await expect(dialog.locator(".qm-overview-head")).toBeVisible();
   await completed;
-  await expect(dialog.locator(".qm-overview-grid")).toBeVisible();
   await openSupplier(page, dialog, "OpenCode");
   await expect(dialog.getByLabel("org id（可选）", { exact: true })).toHaveValue("saved-after-close");
   expect((await control(request, {})).postCount).toBe(1);
@@ -288,9 +286,9 @@ test("全局保存后关闭重开并原生接管时只初始化最新设置", as
   await page.goto("/");
   const opener = page.locator("[data-qm-entry]");
   await opener.click();
-  await page.locator(".qm-pop").getByRole("button", { name: "设置", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "用量监控", exact: true });
-  await dialog.getByRole("tab", { name: "设置", exact: true }).click();
+  await dialog.getByRole("tab", { name: "供应商", exact: true }).click();
+  await openGlobal(dialog);
   const interval = dialog.locator('input[type="number"][min="10"]');
   await expect(interval).toHaveValue("60");
   await interval.fill("120");
@@ -301,20 +299,19 @@ test("全局保存后关闭重开并原生接管时只初始化最新设置", as
   await dialog.getByRole("alertdialog").getByRole("button", { name: "放弃修改", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await opener.click();
-  await page.locator(".qm-pop").getByRole("button", { name: "设置", exact: true }).click();
   await expect(dialog).toBeVisible();
-  await expect(dialog.locator(".qm-supplier-card")).toHaveCount(0);
+  await expect(dialog.locator(".qm-overview-head")).toBeVisible();
   await page.evaluate(() => window.__qmHost.mountSettings());
   const panel = page.locator(".qm-settings-page");
   await expect(panel).toBeVisible();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   // 等待中的再次侧栏点击不能提前解除 opening，也不能从旧缓存初始化 globalForm。
   await opener.click();
-  await page.locator(".qm-pop").getByRole("button", { name: "设置", exact: true }).click();
-  await expect(panel.locator(".qm-supplier-card")).toHaveCount(0);
-  await panel.getByRole("tab", { name: "设置", exact: true }).click();
+  await expect(panel.locator(".qm-overview-head")).toBeVisible();
   await expect(panel.locator('input[type="number"][min="10"]')).toHaveCount(0);
   await completed;
+  await panel.getByRole("tab", { name: "供应商", exact: true }).click();
+  await openGlobal(panel);
   await expect(panel.locator('input[type="number"][min="10"]')).toHaveValue("120");
   expect((await control(request, {})).postCount).toBe(1);
 });
@@ -331,7 +328,9 @@ test("放弃另一个脏草稿后进入在途供应商仍等待保存完成", as
   await openSupplier(page, panel, "Command Code");
   await panel.getByLabel("API Key", { exact: true }).fill("private-dirty-B");
   await panel.getByRole("tab", { name: "概览", exact: true }).click();
-  await panel.locator('.qm-supplier-card[data-supplier="opencode"]').getByRole("button", { name: "配置", exact: true }).click();
+  const opencodeRow = panel.locator('.qm-row[data-supplier="opencode"]');
+  await opencodeRow.locator("[data-qm-row]").click();
+  await opencodeRow.getByRole("button", { name: "配置", exact: true }).click();
   await panel.getByRole("alertdialog").getByRole("button", { name: "放弃修改", exact: true }).click();
   await expect(panel.getByLabel("org id（可选）", { exact: true })).toHaveCount(0);
   await expect(panel.getByLabel("API Key", { exact: true })).toHaveCount(0);

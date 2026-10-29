@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Usage monitor",
-    "description": "A sidebar usage card and supplier quota details: period quotas, per-currency balances, reported cost and today's token usage, with supplier configuration in the same panel."
+    "description": "A sidebar usage card and one monitor panel: period quotas, per-currency balances, reported cost and today's token usage, with supplier configuration in the same panel."
   }
 }

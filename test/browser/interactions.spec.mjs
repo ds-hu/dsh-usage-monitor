@@ -62,7 +62,7 @@ const displayFixture = () => ({
 });
 const useDisplayFixture = (page) => page.route(/\/api\/dsh-token-quota\/state(?:\?.*)?$/, (route) => route.fulfill({ json: displayFixture() }));
 
-test("the billing tier stays on the card; the popover drops it and the warning moves to settings", async ({ page }) => {
+test("the billing tier stays on the card; the split and warning live in the panel", async ({ page }) => {
   const fixture = displayFixture();
   fixture.season = {
     peak: false, tier: "valley", kind: "holiday", valleyReason: "holiday",
@@ -79,31 +79,27 @@ test("the billing tier stays on the card; the popover drops it and the warning m
   await expect(strip).toHaveAttribute("data-qm-season", "valley");
   await expect(strip).toContainText("谷价");
   await expect(strip).toContainText("1d17h 后切换");
-  // 卡片只报档位：成因属于明细，不进这一行
   await expect(strip).not.toContainText("法定节假日");
-  // 圆点颜色必须真的区分峰谷，而不是只有文字
   const valleyColor = await strip.locator(".qm-season-dot").evaluate((node) => getComputedStyle(node).backgroundColor);
   expect(valleyColor).not.toBe("rgba(0, 0, 0, 0)");
 
   await page.locator("[data-qm-entry]").click();
-  // 浮卡不再重复时段块：档位与倒计时由常驻卡片承担
-  await expect(page.locator(".qm-season-block")).toHaveCount(0);
-  await expect(page.locator('[data-qm-season-split="deepseek"]')).toContainText("高峰 1.20M（25%）");
-  await expect(page.locator('[data-qm-season-split="opencode"]')).toHaveCount(0);
-
-  await page.locator(".qm-pop").getByRole("button", { name: "详情", exact: true }).click();
-  const detail = page.getByRole("dialog", { name: "供应商限额明细", exact: true });
-  await expect(detail.locator('[data-supplier="deepseek"] [data-qm-season-block]')).toHaveCount(1);
-  await expect(detail.locator('[data-supplier="deepseek"] [data-qm-season-block]')).toContainText("法定节假日");
-  await expect(detail.locator('[data-supplier="opencode"] [data-qm-season-block]')).toHaveCount(0);
+  const panel = page.getByRole("dialog", { name: "用量监控", exact: true });
+  await expect(panel).toBeVisible();
+  // 概览默认折叠：展开 DeepSeek 才出现时段拆分
+  await expect(panel.locator("[data-qm-season-block]")).toHaveCount(0);
+  const deepseekRow = panel.locator('.qm-row[data-supplier="deepseek"]');
+  await deepseekRow.locator("[data-qm-row]").click();
+  await expect(deepseekRow.locator("[data-qm-season-block]")).toHaveCount(1);
+  await expect(deepseekRow.locator("[data-qm-season-block]")).toContainText("法定节假日");
+  await expect(deepseekRow.locator(".qm-split-stats")).toContainText(/高峰.*1\.20M.*25%/);
+  await expect(panel.locator('.qm-row[data-supplier="opencode"] [data-qm-season-block]')).toHaveCount(0);
 
   // 缺次年必须点名，且要点在能立刻粘贴覆盖表的地方
-  await detail.getByRole("button", { name: "设置", exact: true }).click();
-  const settings = page.getByRole("dialog", { name: "用量监控", exact: true });
-  await settings.getByRole("tab", { name: "设置", exact: true }).click();
-  await expect(settings.locator(".qm-season-warn")).toContainText("2027");
+  await panel.getByRole("tab", { name: "供应商", exact: true }).click();
+  await expect(panel.locator(".qm-season-warn")).toContainText("2027");
   await page.keyboard.press("Escape");
-  await expect(settings).toHaveCount(0);
+  await expect(panel).toHaveCount(0);
 
   // 峰价必须换成另一档文案与另一种颜色（否则「区分峰谷」只是说法）
   fixture.season = { ...fixture.season, peak: true, tier: "peak", kind: "weekday", valleyReason: null,
@@ -140,17 +136,19 @@ test("real provider parsing keeps unknown Command Code resets empty and valid Op
   await page.route(/\/api\/dsh-token-quota\/state(?:\?.*)?$/, route => route.fulfill({ json: fixture }));
   await page.goto("/");
   await page.locator("[data-qm-entry]").click();
-  await page.locator(".qm-pop").getByRole("button", { name: "详情", exact: true }).click();
-  const detail = page.getByRole("dialog", { name: "供应商限额明细", exact: true });
-  const entries = detail.locator(".qm-col").filter({ hasText: "Command Code" }).locator(".qm-card-item");
-  await expect(entries).toHaveCount(3);
-  await expect(entries.nth(0).locator(".ci-name span").last()).toHaveText("—");
-  await expect(entries.nth(1).locator(".ci-name span").last()).toHaveText("—");
-  await expect(entries.nth(0)).toContainText("未提供重置时刻");
-  await expect(entries.nth(2).locator(".ci-name span").last()).toContainText(/4h59m|5h00m/);
-  await expect(detail.locator(".qm-col").filter({ hasText: "OpenCode" })).toContainText(/4h59m|5h00m/);
-  await expect(detail).not.toContainText("1月1日");
-  await expect(detail).not.toContainText("NaN");
+  const panel = page.getByRole("dialog", { name: "用量监控", exact: true });
+  const commandRow = panel.locator('.qm-row[data-supplier="commandcode"]');
+  await commandRow.locator("[data-qm-row]").click();
+  const rows = commandRow.locator(".qm-metric-table").first().locator("tbody tr");
+  await expect(rows).toHaveCount(3);
+  await expect(rows.nth(0).locator("td").last()).toHaveText("—");
+  await expect(rows.nth(1).locator("td").last()).toHaveText("—");
+  await expect(rows.nth(2).locator("td").last()).toContainText(/4h59m|5h00m/);
+  const opencodeRow = panel.locator('.qm-row[data-supplier="opencode"]');
+  await opencodeRow.locator("[data-qm-row]").click();
+  await expect(opencodeRow).toContainText(/4h59m|5h00m/);
+  await expect(panel).not.toContainText("1月1日");
+  await expect(panel).not.toContainText("NaN");
 });
 test("restored details show supplier columns and a bounded history table before settings", async ({ page }) => {
   const fixture = displayFixture();
@@ -161,31 +159,29 @@ test("restored details show supplier columns and a bounded history table before 
   await page.route(/\/api\/dsh-token-quota\/state(?:\?.*)?$/, route => route.fulfill({ json: fixture }));
   await page.goto("/");
   await page.locator("[data-qm-entry]").click();
-  await page.locator(".qm-pop").getByRole("button", { name: "详情", exact: true }).click();
-  const detail = page.getByRole("dialog", { name: "供应商限额明细", exact: true });
-  await expect(detail).toBeVisible();
-  await expect(detail.getByRole("tab")).toHaveCount(0);
-  await expect(detail.locator(".qm-col")).toHaveCount(3);
-  await expect(detail).not.toContainText("Unconfigured");
-  const columns = await detail.locator(".qm-col").evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().top));
-  expect(new Set(columns).size).toBe(1);
-  await detail.getByRole("button", { name: "关闭", exact: true }).focus();
-  await page.keyboard.press("Tab");
-  await expect(detail.locator(".qm-history summary")).toBeFocused();
+  const panel = page.getByRole("dialog", { name: "用量监控", exact: true });
+  await expect(panel).toBeVisible();
+  await expect(panel.getByRole("tab")).toHaveCount(2);
+  await expect(panel.locator(".qm-row")).toHaveCount(3);
+  await expect(panel).not.toContainText("Unconfigured");
+  const boxes = await panel.locator(".qm-row").evaluateAll(nodes => nodes.map(node => {
+    const box = node.getBoundingClientRect();
+    return { left: box.left, top: box.top };
+  }));
+  expect(new Set(boxes.map((box) => box.left)).size).toBe(1);
+  expect(boxes[1].top).toBeGreaterThan(boxes[0].top);
+  const summary = panel.locator(".qm-history summary");
+  await summary.focus();
   await page.keyboard.press("Enter");
-  await expect(detail.getByRole("columnheader")).toHaveText(["时间", "供应商", "时段", "结果", "主指标", "备注"]);
-  await expect(detail.locator("tbody tr")).toHaveCount(50);
-  await expect(detail.locator("tbody tr").first()).toContainText("fixture timeout");
+  await expect(panel.getByRole("columnheader")).toHaveText(["时间", "供应商", "时段", "结果", "主指标", "备注"]);
+  await expect(panel.locator("tbody tr")).toHaveCount(50);
+  await expect(panel.locator("tbody tr").first()).toContainText("fixture timeout");
   // 这一页的夹具没有 season，历史记录也不带 tier：必须显示「—」而不是编造一个时段
-  await expect(detail.locator("tbody tr").first().locator("td").nth(2)).toHaveText("—");
+  await expect(panel.locator("tbody tr").first().locator("td").nth(2)).toHaveText("—");
   await mkdir(visualDirectory, { recursive: true });
   await page.screenshot({ path: resolve(visualDirectory, "restored-details.png"), fullPage: true });
-  await detail.getByRole("button", { name: "设置", exact: true }).click();
-  await expect(detail).toHaveCount(0);
-  const settings = page.getByRole("dialog", { name: "用量监控", exact: true });
-  await expect(settings.getByRole("tab")).toHaveCount(3);
   await page.keyboard.press("Escape");
-  await expect(settings).toHaveCount(0);
+  await expect(panel).toHaveCount(0);
   await expect(page.locator("[data-qm-entry]")).toBeFocused();
 });
 test.beforeEach(async ({ request }) => {
@@ -193,7 +189,7 @@ test.beforeEach(async ({ request }) => {
 });
 
 for (const [width, density] of [[240, "expanded"], [180, "compact"], [64, "rail"]]) {
-  test(`A2 ${width}px sidebar opens an anchored popover and returns focus`, async ({ page }) => {
+  test(`A2 ${width}px sidebar opens the monitor panel and returns focus`, async ({ page }) => {
     await useDisplayFixture(page);
     await page.goto(density === "rail" ? "/?rail&width=64" : `/?width=${width}`);
     const opener = page.locator("[data-qm-entry]");
@@ -213,24 +209,23 @@ for (const [width, density] of [[240, "expanded"], [180, "compact"], [64, "rail"
       await expect(opener.locator(".qm-primary")).toContainText("63%");
     }
     await opener.click();
-    const dialog = page.getByRole("dialog", { name: "用量", exact: true });
-    await expect(dialog).toBeVisible();
-    await expect(dialog).not.toHaveAttribute("aria-modal", "true");
-    await expect(dialog.getByRole("tab")).toHaveCount(0);
-    await expect(page.locator(".qm-overlay")).toHaveCount(0);
-    const popupBox = await dialog.boundingBox(), anchorBox = await opener.boundingBox();
-    expect(popupBox.y + popupBox.height).toBeLessThanOrEqual(anchorBox.y);
-    expect(popupBox.x).toBeGreaterThanOrEqual(0);
-    expect(popupBox.x + popupBox.width).toBeLessThanOrEqual(1180);
+    const panel = page.getByRole("dialog", { name: "用量监控", exact: true });
+    await expect(panel).toBeVisible();
+    await expect(panel).toHaveAttribute("aria-modal", "true");
+    await expect(panel.getByRole("tab")).toHaveCount(2);
+    await expect(page.locator(".qm-overlay")).toHaveCount(1);
+    const box = await panel.boundingBox();
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(1180);
     if (width === 240) {
-      await expect(dialog.locator('[data-supplier="deepseek"]')).toContainText("更新失败 · 上次数据");
-      await expect(dialog.locator('[data-supplier="deepseek"]')).toContainText("另有 1 项");
+      await expect(panel.locator('.qm-row[data-supplier="deepseek"]')).toContainText("更新失败 · 上次数据");
+      await panel.locator('.qm-row[data-supplier="deepseek"] [data-qm-row]').click();
+      await expect(panel.locator('.qm-row[data-supplier="deepseek"]')).toContainText("¥41.99");
       await mkdir(visualDirectory, { recursive: true });
       await page.screenshot({ path: resolve(visualDirectory, "overview-normal-and-stale.png"), fullPage: true });
     }
-    await expect(page.locator(".qm-pop")).toHaveCount(1);
     await page.keyboard.press("Escape");
-    await expect(dialog).toHaveCount(0);
+    await expect(panel).toHaveCount(0);
     await expect(opener).toBeFocused();
   });
 }
@@ -287,18 +282,16 @@ test("the card shows the plan name and a coloured weekly bar, and falls back to 
   await page.screenshot({ path: resolve(cardDirectory, "card-week-crit-light.png"), fullPage: true });
 });
 
-test("the card head opens statistics where token bars and remaining-quota lines share one chart", async ({ page }) => {
+test("expanding a supplier shows token bars and remaining-quota lines in one chart", async ({ page }) => {
   const statsDirectory = resolve(".scratch/sidebar-stats");
   await useDisplayFixture(page);
   await page.goto("/");
-  const head = page.locator("[data-qm-stats-entry]");
-  await expect(head.locator(".qm-plan")).toHaveText("OpenCode");
-  await expect(head).toHaveAttribute("aria-haspopup", "dialog");
-  await head.click();
-
-  const dialog = page.getByRole("dialog", { name: "用量统计", exact: true });
-  await expect(dialog).toBeVisible();
-  const plot = dialog.locator('[data-qm-chart="opencode"]');
+  const opener = page.locator("[data-qm-entry]");
+  await opener.click();
+  const panel = page.getByRole("dialog", { name: "用量监控", exact: true });
+  const row = panel.locator('.qm-row[data-supplier="opencode"]');
+  await row.locator("[data-qm-row]").click();
+  const plot = row.locator('[data-qm-chart="opencode"]');
   await expect(plot).toBeVisible();
 
   // 柱 = 每日 token：只有两天有量，就只画两根柱（空日不画假柱子）
@@ -306,12 +299,12 @@ test("the card head opens statistics where token bars and remaining-quota lines 
   // 5h 在窗口中途用满后重置 → 折线断开成两段；周用量一段，共三条
   await expect(plot.locator("polyline.qm-chart-line")).toHaveCount(3);
   // 图例带当前剩余：5h 已用 63% → 剩 37%；周已用 40% → 剩 60%
-  await expect(dialog.locator(".qm-chart-key")).toHaveText(["5h 剩余 37%", "周 剩余 60%"]);
+  await expect(row.locator(".qm-chart-key")).toHaveText(["5h 剩余 37%", "周 剩余 60%"]);
   // 比例挨着今日总量，冒号两侧留空格且三段各三位有效数字
-  await expect(dialog.locator(".qm-stats-ratio .qm-ratio")).toHaveText("30.0 : 1.00 : 0.150");
+  await expect(row.locator(".qm-today-line .qm-ratio")).toHaveText("30.0 : 1.00 : 0.150");
 
   // 日期刻度每天一个，且必须与对应那根柱居中对齐（同一坐标系，不能整体偏移一个内边距）
-  await expect(dialog.locator(".qm-chart-tick")).toHaveText(dayLabels(7).map((day) => day.slice(5)));
+  await expect(row.locator(".qm-chart-tick")).toHaveText(dayLabels(7).map((day) => day.slice(5)));
   const aligned = await plot.evaluate((node) => {
     const ticks = [...node.parentElement.querySelectorAll(".qm-chart-tick")].map((el) => {
       const box = el.getBoundingClientRect();
@@ -339,15 +332,16 @@ test("the card head opens statistics where token bars and remaining-quota lines 
   });
   expect(inside).toBe(true);
   // 窄面板也不许出现横向滚动条
-  expect(await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+  expect(await panel.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
 
   await mkdir(statsDirectory, { recursive: true });
   await page.screenshot({ path: resolve(statsDirectory, "stats-combined-chart.png"), fullPage: true });
 
   // 线上的形状不给数字：悬停把那一刻的读数放进浮层（最近一次采样，不插值），并落一条十字线
+  await plot.scrollIntoViewIfNeeded();
   const box = await plot.boundingBox();
   await page.mouse.move(box.x + box.width * 0.94, box.y + box.height / 2);
-  const tip = dialog.locator(".qm-chart-tip");
+  const tip = row.locator(".qm-chart-tip");
   await expect(tip).toBeVisible();
   await expect(tip).toContainText("剩余");
   await expect(tip).toContainText("3.15M token");
@@ -359,10 +353,31 @@ test("the card head opens statistics where token bars and remaining-quota lines 
   await page.mouse.move(0, 0);
   await expect(tip).toHaveCount(0);
 
-  // Escape 关闭后焦点回到打开它的标题行（不是监控条）
+  // Escape 关闭后焦点回到卡片入口
   await page.keyboard.press("Escape");
-  await expect(dialog).toHaveCount(0);
-  await expect(head).toBeFocused();
+  await expect(panel).toHaveCount(0);
+  await expect(opener).toBeFocused();
+});
+
+test("default views keep explanatory prose collapsed", async ({ page }) => {
+  await useDisplayFixture(page);
+  await page.goto("/");
+  await page.locator("[data-qm-entry]").click();
+  const panel = page.getByRole("dialog", { name: "用量监控", exact: true });
+  await expect(panel).toBeVisible();
+  // 概览默认只给数据：没有常显的 .pnote，说明藏在收起的 ⓘ 里
+  await expect(panel.locator(".pnote")).toHaveCount(0);
+  await expect(panel.locator(".qm-info p").first()).toBeHidden();
+  await expect(panel.locator(".qm-pop, .qm-details, .qm-stats")).toHaveCount(0);
+  await mkdir(visualDirectory, { recursive: true });
+  await page.screenshot({ path: resolve(visualDirectory, "panel-overview.png"), fullPage: true });
+  await panel.getByRole("tab", { name: "供应商", exact: true }).click();
+  await expect(panel.locator(".pnote")).toHaveCount(0);
+  await page.screenshot({ path: resolve(visualDirectory, "panel-suppliers.png"), fullPage: true });
+  await expect(panel.locator("details.qm-global")).not.toHaveAttribute("open", "");
+  await panel.locator("details.qm-global > summary").click();
+  // 覆盖表说明仍可读，但不默认占一行
+  await expect(panel.locator(".qm-info p").first()).toBeHidden();
 });
 
 test("A2 sidebar preference persists and automatic narrow layout never overwrites it", async ({ page }) => {
@@ -381,61 +396,63 @@ test("A2 sidebar preference persists and automatic narrow layout never overwrite
   await page.evaluate(() => window.__qmHost.setWidth(240));
   await expect(strip).toHaveAttribute("data-qm-density", "expanded");
   await page.locator("[data-qm-entry]").click();
-  await page.locator(".qm-pop").getByRole("button", { name: "设置", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "用量监控", exact: true });
-  await dialog.getByRole("tab", { name: "设置", exact: true }).click();
+  await dialog.getByRole("tab", { name: "供应商", exact: true }).click();
   await dialog.getByLabel("侧栏显示", { exact: true }).selectOption("compact");
   await expect(strip).toHaveAttribute("data-qm-density", "compact");
 });
 
-test("usage popover toggles, dismisses without a backdrop, and fits resized viewports", async ({ page }) => {
+test("the monitor panel is modal, closes on Escape, and fits resized viewports", async ({ page }) => {
   await useDisplayFixture(page);
   await page.goto("/");
   const entry = page.locator("[data-qm-entry]");
-  const popover = page.getByRole("dialog", { name: "用量", exact: true });
+  const panel = page.getByRole("dialog", { name: "用量监控", exact: true });
   await entry.click();
   await expect(entry).toHaveAttribute("aria-expanded", "true");
-  await expect(popover).toBeVisible();
-  await entry.click();
-  await expect(popover).toHaveCount(0);
-  await entry.click();
-  await page.getByRole("button", { name: "打开原生设置", exact: true }).click();
-  await expect(popover).toHaveCount(0);
-  await expect(page.locator(".qm-settings-page")).toBeVisible();
-  await entry.click();
-  await page.setViewportSize({ width: 280, height: 380 });
-  await expect(popover).toBeVisible();
-  const box = await popover.boundingBox();
+  await expect(panel).toBeVisible();
+  await expect(panel).toHaveAttribute("aria-modal", "true");
+  // 面板必须真的浮在整页之上：遮罩铺满视口，卡片居中且四周留白，而不是跟着文档流贴在左边。
+  const modal = await page.locator(".qm-overlay").evaluate((node) => {
+    const card = node.querySelector(".qm-card");
+    const overlay = node.getBoundingClientRect();
+    const box = card.getBoundingClientRect();
+    return { position: getComputedStyle(node).position, overlay: { width: overlay.width, height: overlay.height },
+      card: { x: box.x, width: box.width }, padding: getComputedStyle(card).padding, vw: innerWidth, vh: innerHeight };
+  });
+  expect(modal.position).toBe("fixed");
+  expect(modal.overlay).toEqual({ width: modal.vw, height: modal.vh });
+  expect(Math.abs(modal.card.x - (modal.vw - modal.card.width) / 2)).toBeLessThanOrEqual(1);
+  expect(modal.card.x).toBeGreaterThanOrEqual(16);
+  expect(modal.padding).toBe("20px 24px 24px");
+  await page.setViewportSize({ width: 390, height: 600 });
+  const box = await panel.boundingBox();
   expect(box.x).toBeGreaterThanOrEqual(0);
   expect(box.y).toBeGreaterThanOrEqual(0);
-  expect(box.x + box.width).toBeLessThanOrEqual(280);
-  expect(box.y + box.height).toBeLessThanOrEqual(380);
-  await popover.getByRole("button", { name: "关闭", exact: true }).click();
-  await expect(popover).toHaveCount(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(390);
+  expect(box.y + box.height).toBeLessThanOrEqual(600);
+  await panel.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(panel).toHaveCount(0);
   await expect(entry).toBeFocused();
 });
 
-test("the host's narrow layout opens details on the first tap; the wide layout keeps the popover", async ({ page }) => {
+test("rail and expanded sidebars open the same panel; mobile no longer has a separate first tap", async ({ page }) => {
   await useDisplayFixture(page);
   await page.setViewportSize({ width: 900, height: 700 });
   await page.goto("/?rail");
   await page.locator("[data-qm-entry]").click();
-  await expect(page.locator(".qm-pop")).toHaveCount(0);
-  await expect(page.getByRole("dialog", { name: "供应商限额明细", exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "用量监控", exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
 
-  await page.setViewportSize({ width: 1180, height: 800 });
-  await page.reload();
+  await page.setViewportSize({ width: 280, height: 700 });
+  await page.goto("/?width=180");
   await page.locator("[data-qm-entry]").click();
-  await expect(page.locator(".qm-pop")).toHaveCount(1);
-  await expect(page.getByRole("dialog", { name: "用量", exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "用量监控", exact: true })).toBeVisible();
 });
 
 test("A3 dialog traps focus, preserves organization and retains a rejected draft", async ({ page }) => {
   await page.goto("/");
   const opener = page.locator("[data-qm-entry]");
   await opener.click();
-  await page.locator(".qm-pop").getByRole("button", { name: "设置", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "用量监控", exact: true });
   await expect(dialog).toHaveAttribute("aria-modal", "true");
   await expect.poll(() => dialog.evaluate((node) => node.contains(document.activeElement))).toBe(true);
@@ -471,11 +488,16 @@ for (const light of [false, true]) {
     await page.goto(`/?rail${light ? "&light" : ""}`);
     const opener = page.locator("[data-qm-entry]");
     await opener.click();
-    await expect(page.locator(".qm-pop")).toHaveCount(0);
-    const dialog = page.getByRole("dialog", { name: "供应商限额明细", exact: true });
+    const dialog = page.getByRole("dialog", { name: "用量监控", exact: true });
     await expect(dialog).toBeVisible();
     await expect(opener).toHaveAttribute("aria-expanded", "true");
-    await expect(dialog.locator('[data-metric-kind="balance"]')).toHaveCount(2);
+    const row = dialog.locator('.qm-row[data-supplier="deepseek"]');
+    await row.locator("[data-qm-row]").click();
+    await expect(row).toContainText("$3.20");
+    await expect(row).toContainText("¥41.99");
+    const quotaRow = dialog.locator('.qm-row[data-supplier="opencode"]');
+    await quotaRow.locator("[data-qm-row]").click();
+    await expect(quotaRow.locator(".qm-metric-table")).toBeVisible();
     const box = await dialog.boundingBox();
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(390);
@@ -494,13 +516,11 @@ test("A3 embedded settings has no modal restrictions and sidebar reuses it", asy
   await expect(panel).toBeVisible();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.locator(".qm-overlay")).toHaveCount(0);
-  await panel.getByRole("tab", { name: "设置", exact: true }).click();
   await page.locator("#background").focus();
   await page.keyboard.press("Escape");
   await expect(panel).toBeVisible();
   await expect(page.locator("#background")).toBeFocused();
   await page.locator("[data-qm-entry]").click();
-  await page.locator(".qm-pop").getByRole("button", { name: "设置", exact: true }).click();
   await expect(panel.getByRole("tab", { name: "概览", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await panel.locator("button:visible, summary:visible, input:visible, select:visible").last().focus();
@@ -511,7 +531,6 @@ test("A3 embedded settings has no modal restrictions and sidebar reuses it", asy
 test("A3 native page takes over an open dialog and preserves its secret draft", async ({ page }) => {
   await page.goto("/");
   await page.locator("[data-qm-entry]").click();
-  await page.locator(".qm-pop").getByRole("button", { name: "设置", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "用量监控", exact: true });
   await dialog.getByRole("tab", { name: "供应商", exact: true }).click();
   await dialog.locator('.qm-page-row[data-supplier="opencode"]').getByRole("button", { name: "配置", exact: true }).click();
@@ -527,16 +546,16 @@ test("A3 native page takes over an open dialog and preserves its secret draft", 
 test("A3 embedded page restores its host scroll position after supplier configuration", async ({ page }) => {
   await useDisplayFixture(page);
   await page.goto("/?settings");
-  await page.locator("#settings").evaluate((node) => Object.assign(node.style, { width: "350px", height: "260px", overflow: "auto" }));
+  await page.locator("#settings").evaluate((node) => Object.assign(node.style, { width: "350px", height: "120px", overflow: "auto" }));
   const panel = page.locator(".qm-settings-page");
-  const configure = panel.locator('.qm-supplier-card[data-supplier="deepseek"]').getByRole("button", { name: "配置", exact: true });
+  const configure = panel.locator('.qm-page-row[data-supplier="deepseek"]').getByRole("button", { name: "配置", exact: true });
   await configure.scrollIntoViewIfNeeded();
   const scrollTop = await page.locator("#settings").evaluate((node) => node.scrollTop);
   expect(scrollTop).toBeGreaterThan(0);
   await configure.click();
   await expect(panel.locator(".qm-page-head")).toContainText("DeepSeek");
   await panel.getByRole("button", { name: "← 返回" }).click();
-  await expect(panel.locator(".qm-overview-grid")).toBeVisible();
+  await expect(panel.locator(".qm-page-list")).toBeVisible();
   await expect.poll(() => page.locator("#settings").evaluate((node) => node.scrollTop)).toBe(scrollTop);
 });
 
@@ -576,12 +595,22 @@ test("watched limits draw one aligned bar per configured window, each with its o
   const resets = entry.locator(".qm-bar-reset");
   const [r1, r2] = [await resets.nth(0).boundingBox(), await resets.nth(1).boundingBox()];
   expect(r1.x + r1.width).toBeCloseTo(r2.x + r2.width, 1);
+  // 卡片内容不许贴边：标题与倒计时都要留出可读的内边距，长倒计时不能被卡片边缘裁掉
+  const cardBox = await page.locator(".qm-footer").boundingBox();
+  const nameBox = await entry.locator(".qm-plan").boundingBox();
+  expect(nameBox.x - cardBox.x).toBeGreaterThanOrEqual(6);
+  expect(nameBox.y - cardBox.y).toBeGreaterThanOrEqual(8);
+  expect(cardBox.x + cardBox.width - Math.max(r1.x + r1.width, r2.x + r2.width)).toBeGreaterThanOrEqual(6);
+  expect(await page.locator(".qm-footer").evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+  await mkdir(visualDirectory, { recursive: true });
+  await page.screenshot({ path: resolve(visualDirectory, "card-bars.png"), fullPage: true });
   // 卡片第 3 行（今日）已取消；今日用量改在详情弹窗里按供应商展示
   await expect(entry.locator(".qm-l3")).toHaveCount(0);
   await entry.click();
-  await page.locator(".qm-pop").getByRole("button", { name: "详情", exact: true }).click();
-  const detail = page.getByRole("dialog", { name: "供应商限额明细", exact: true });
-  await expect(detail.locator('[data-supplier="opencode"] .qm-today-line')).toContainText("1.24M tokens");
+  const panel = page.getByRole("dialog", { name: "用量监控", exact: true });
+  const row = panel.locator('.qm-row[data-supplier="opencode"]');
+  await row.locator("[data-qm-row]").click();
+  await expect(row.locator(".qm-today-line")).toContainText("1.24M tokens");
 });
 
 test("no watched limits keeps the weekly default, and an empty intersection falls back quietly", async ({ page }) => {
@@ -602,7 +631,6 @@ test("the supplier page lists watchable limits and saves displayKeys in check or
   await page.route(/\/api\/dsh-token-quota\/state(?:\?.*)?$/, (r) => r.fulfill({ json: watchedFixture([]) }));
   await page.goto("/");
   await page.locator("[data-qm-entry]").click();
-  await page.locator(".qm-pop").getByRole("button", { name: "设置", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "用量监控", exact: true });
   await dialog.getByRole("tab", { name: "供应商", exact: true }).click();
   await dialog.locator('.qm-page-row[data-supplier="opencode"]').getByRole("button", { name: "配置", exact: true }).click();
