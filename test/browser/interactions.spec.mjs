@@ -300,8 +300,23 @@ test("expanding a supplier shows token bars and remaining-quota lines in one cha
   await expect(plot.locator("polyline.qm-chart-line")).toHaveCount(3);
   // 图例带当前剩余：5h 已用 63% → 剩 37%；周已用 40% → 剩 60%
   await expect(row.locator(".qm-chart-key")).toHaveText(["5h 剩余 37%", "周 剩余 60%"]);
-  // 比例挨着今日总量，冒号两侧留空格且三段各三位有效数字
+  // 比例挨着今日总量，冒号两侧留空格且三段各三位有效数字；分布条整行只留一条
   await expect(row.locator(".qm-today-line .qm-ratio")).toHaveText("30.0 : 1.00 : 0.150");
+  await expect(row.locator(".qm-split-bar")).toHaveCount(1);
+
+  // 图顶给窗口合计，不再单开一行；每根有量的柱标出当日 Token
+  await expect(row.locator(".qm-chart-cap")).toHaveText("近 7 天 4.22M token");
+  await expect(row.locator(".qm-chart-foot")).toHaveCount(0);
+  await expect(row.locator(".qm-chart-value")).toHaveText(["1.07M", "3.15M"]);
+  const labelCenters = await plot.evaluate((node) => {
+    const center = (el) => { const box = el.getBoundingClientRect(); return box.left + box.width / 2; };
+    return {
+      bars: [...node.querySelectorAll("rect.qm-chart-bar")].map(center),
+      labels: [...node.querySelectorAll(".qm-chart-value")].map(center),
+    };
+  });
+  expect(labelCenters.labels.length).toBe(labelCenters.bars.length);
+  labelCenters.labels.forEach((center, index) => expect(Math.abs(center - labelCenters.bars[index])).toBeLessThanOrEqual(2));
 
   // 日期刻度每天一个，且必须与对应那根柱居中对齐（同一坐标系，不能整体偏移一个内边距）
   await expect(row.locator(".qm-chart-tick")).toHaveText(dayLabels(7).map((day) => day.slice(5)));
@@ -357,6 +372,35 @@ test("expanding a supplier shows token bars and remaining-quota lines in one cha
   await page.keyboard.press("Escape");
   await expect(panel).toHaveCount(0);
   await expect(opener).toBeFocused();
+});
+
+test("metric table headers sit on the same edge as their cells", async ({ page }) => {
+  await useDisplayFixture(page);
+  await page.goto("/");
+  await page.locator("[data-qm-entry]").click();
+  const panel = page.getByRole("dialog", { name: "用量监控", exact: true });
+  const row = panel.locator('.qm-row[data-supplier="opencode"]');
+  await row.locator("[data-qm-row]").click();
+  const table = row.locator(".qm-metric-table").first();
+  await expect(table).toBeVisible();
+  await expect(table.locator("thead th")).toHaveText(["指标", "已用", "限额", "重置"]);
+  // 量文字包围盒而不是单元格：列右缘天然相同，错位发生在单元格内部的对齐方式
+  const edges = await table.evaluate((node) => {
+    const head = [...node.querySelectorAll("thead th")];
+    const cells = [...node.querySelector("tbody tr").children];
+    const box = (el) => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const rect = range.getBoundingClientRect();
+      return { left: rect.left, right: rect.right };
+    };
+    return head.map((th, index) => ({ head: box(th), cell: box(cells[index]) }));
+  });
+  expect(edges).toHaveLength(4);
+  expect(Math.abs(edges[0].head.left - edges[0].cell.left)).toBeLessThanOrEqual(1);
+  for (const pair of edges.slice(1)) {
+    expect(Math.abs(pair.head.right - pair.cell.right)).toBeLessThanOrEqual(1);
+  }
 });
 
 test("default views keep explanatory prose collapsed", async ({ page }) => {
@@ -498,6 +542,8 @@ for (const light of [false, true]) {
     const quotaRow = dialog.locator('.qm-row[data-supplier="opencode"]');
     await quotaRow.locator("[data-qm-row]").click();
     await expect(quotaRow.locator(".qm-metric-table")).toBeVisible();
+    // 390px 仍在可读范围：柱值保留（9px），不因容器查询被误藏
+    await expect(quotaRow.locator(".qm-chart-value")).toHaveCount(2);
     const box = await dialog.boundingBox();
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(390);

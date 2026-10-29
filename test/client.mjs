@@ -13,7 +13,13 @@ function client(fetch, { storage = new Map(), search = "", clock = null, mobile 
   const slots = {}, timers = [], listeners = {}, cleanups = [];
   const subscribe = (type, fn) => (listeners[type] ||= new Set()).add(fn);
   const unsubscribe = (type, fn) => listeners[type]?.delete(fn);
-  const document = { querySelector: () => true, body: {}, visibilityState: "visible", addEventListener: subscribe, removeEventListener: unsubscribe };
+  let styleTag = null;
+  const document = {
+    querySelector: () => styleTag,
+    createElement: () => (styleTag = { dataset: {}, textContent: "" }),
+    head: { appendChild() {} },
+    body: {}, visibilityState: "visible", addEventListener: subscribe, removeEventListener: unsubscribe,
+  };
   const window = {
     __ModuleLoader__: { load({ factory }) { plugin = factory((id) => id === "react" ? React : { createPortal: (child) => child }); } },
     location: { search }, addEventListener: subscribe, removeEventListener: unsubscribe,
@@ -39,7 +45,7 @@ function client(fetch, { storage = new Map(), search = "", clock = null, mobile 
     context.__setNow = (value) => { fixed.Now = value; };
   }
   // 只为纯展示函数提供测试访问点，不修改生产导出或加载方式。
-  vm.runInNewContext(source.replace("exports.apply = apply;", "exports.__test = { buildEntryView, metricRowsOf, selectPrimaryMetric, supplierStatus, connStateOf, seasonCountdown, seasonSplitText, fmtBig, weeklyEntryOf, selectBarMetrics, usageRatioOf, ratioPartsOf, splitPartsOf, chartDomainOf, quotaSegmentsOf, quotaLegendOf, quotaUsedAt, clockOf, dayStartOf }; exports.apply = apply;"), context);
+  vm.runInNewContext(source.replace("exports.apply = apply;", "exports.__test = { buildEntryView, metricRowsOf, selectPrimaryMetric, supplierStatus, connStateOf, seasonCountdown, seasonSplitText, fmtBig, weeklyEntryOf, selectBarMetrics, usageRatioOf, splitPartsOf, chartDomainOf, quotaSegmentsOf, quotaLegendOf, quotaUsedAt, clockOf, dayStartOf }; exports.apply = apply;"), context);
   plugin.apply({ locale: { register(ns, locales_) { Object.assign(locales, locales_); dictionary = locales_.zh; } }, effect(fn) { cleanups.push(fn()); }, slots: {
     inject(name, fn) { return fn(); }, register(descriptor, component) { slots[descriptor.name ?? descriptor.key] = component; },
   } });
@@ -51,6 +57,8 @@ const textOf = (node) => {
   return walk(node.children ?? node);
 };
 const line = (tree, name) => textOf(tree.root.findByProps({ className: name }));
+/** 按 class token 找节点：同一元素可能同时带 qm-split-bar 与 qm-split-lg。 */
+const withClass = (node, name) => node.findAll((child) => String(child.props?.className || "").split(" ").includes(name));
 /** 进度条节点（唯一）：不存在表示这一行回落成了主指标文字。 */
 const barNode = (tree) => tree.root.findAllByProps({ "data-qm-bar": "" })[0] ?? null;
 const button = (tree, name) => tree.root.findAllByType("button").find((node) => textOf(node) === name || node.props["aria-label"] === name);
@@ -356,7 +364,7 @@ test("the card draws one bar per watched limit with its own countdown and no tod
 
 test("the ratio normalizes to cache misses and refuses to invent one from nothing", async () => {
   const host = client(async () => response(payload("A")));
-  const { usageRatioOf, ratioPartsOf, splitPartsOf } = host.helpers;
+  const { usageRatioOf, splitPartsOf } = host.helpers;
   // 30 倍命中、0.15 倍输出：归一到未命中 = 1；每段都是 3 位有效数字（与卡片量级同口径）
   const ratio = usageRatioOf({ cacheReadTokens: 3_000_000, inputTokens: 100_000, outputTokens: 15_000 });
   assert.equal(ratio.text, "30.0 : 1.00 : 0.150");
@@ -368,10 +376,9 @@ test("the ratio normalizes to cache misses and refuses to invent one from nothin
   assert.equal(usageRatioOf({ unsplitTokens: 500 }), null);
   // 小于显示精度的段落显式给 <0.0001，不四舍五入成 0
   assert.equal(usageRatioOf({ cacheReadTokens: 1, inputTokens: 1_000_000, outputTokens: 1 }).text, "<0.0001 : 1.00 : <0.0001");
-  // 详情行的分布条只取三分量；统计页取全部五分量；零分量都不出现
+  // 详情里的分布条取全部五分量；零分量都不出现
   //（返回数组来自 vm realm，按字符串比较，避免跨 realm 的原型差异）
   const usage = { cacheReadTokens: 30, inputTokens: 10, outputTokens: 5, cacheWriteTokens: 99, unsplitTokens: 7 };
-  assert.equal(ratioPartsOf(usage).map((part) => part.cls).join(","), "hit,miss,out");
   assert.equal(splitPartsOf(usage).map((part) => part.cls).join(","), "hit,miss,out,write,unsplit");
   await act(async () => {});
 });
@@ -390,10 +397,11 @@ test("details show the colored ratio next to today's total, and only when compon
     const line = rowOf(tree, "opencode").findByProps({ className: "qm-today-line" });
     assert.match(textOf(line), /今日用量 3\.15M tokens/, "总量仍按供应商口径");
     assert.match(textOf(line), /30\.0 : 1\.00 : 0\.150/, "比例挨着总量：命中 : 未命中 : 输出，未命中 = 1");
-    // 三个数字分别着段色，与三段分布条一一对应
+    // 三个数字分别着段色，与下方五段条的前三段一一对应
     const ratio = line.findByProps({ className: "qm-ratio" });
     assert.deepEqual(ratio.findAllByType("b").map((node) => node.props.className), ["r-hit", "r-miss", "r-out"]);
-    assert.equal(line.findAllByProps({ className: "qm-split-bar" }).length, 1);
+    assert.equal(withClass(line, "qm-split-bar").length, 0, "今日行不再重复画一条分布条");
+    assert.equal(withClass(rowOf(tree, "opencode"), "qm-split-bar").length, 1, "整行只有下方五分量块那一条");
     await act(async () => tree.unmount()); tree = null;
 
     // 旧载荷没有 todayUsage：只显示总量，不画空条、不编比例
@@ -403,7 +411,8 @@ test("details show the colored ratio next to today's total, and only when compon
     await expand(tree, "opencode");
     const bare = rowOf(tree, "opencode").findByProps({ className: "qm-today-line" });
     assert.match(textOf(bare), /今日用量 500 tokens/);
-    assert.equal(bare.findAllByProps({ className: "qm-split-bar" }).length, 0);
+    assert.equal(withClass(bare, "qm-split-bar").length, 0);
+    assert.equal(withClass(rowOf(tree, "opencode"), "qm-split-bar").length, 0);
     assert.equal(bare.findAllByProps({ className: "qm-ratio" }).length, 0);
   } finally { await act(async () => tree?.unmount()); }
 });
@@ -444,15 +453,16 @@ test("expanding a supplier shows today's ratio, the five-part split and one comb
     await flush();
     assert.equal(quotaGets, 1, "首次展开只取一次额度历史");
     const row = rowOf(tree, "opencode");
-    // 今日比例与五分量图例：三比例、五分量各司其职
+    // 今日比例与五分量图例：比例看三段，分布条只画一条五分量
     assert.match(textOf(row.findByProps({ className: "qm-today-line" })), /30\.0 : 1\.00 : 0\.150/);
+    assert.equal(withClass(row, "qm-split-bar").length, 1, "整行只有一条分布条");
     const legend = textOf(row.findByProps({ className: "qm-usage-legend" }));
     assert.match(legend, /缓存命中 3\.00M/);
     assert.match(legend, /缓存未命中 100K/);
     assert.match(legend, /输出 15\.0K/);
     assert.match(legend, /缓存写入 40\.0K/);
     // 一张图：柱 = 每日 token，线 = 剩余额度；日期刻度连续
-    assert.match(textOf(row.findByProps({ className: "qm-chart-cap" })), /3\.15M token/);
+    assert.match(textOf(row.findByProps({ className: "qm-chart-cap" })), /近 7 天 4\.22M token/);
     const ticks = row.findByProps({ className: "qm-chart-ticks" });
     assert.equal(ticks.findAllByProps({ className: "qm-chart-tick" }).length, 7);
     assert.equal(ticks.findAllByProps({ className: "qm-chart-tick" }).map(textOf).join(","),
@@ -460,13 +470,15 @@ test("expanding a supplier shows today's ratio, the five-part split and one comb
     const plot = row.findByProps({ "data-qm-chart": "opencode" });
     const bars = plot.findAll((node) => node.type === "rect" && node.props.className === "qm-chart-bar");
     assert.equal(bars.length, 2, "只有两天有消耗，就只画两根柱");
+    // 柱值：有量的那天各标一个，文字用同一套量级格式
+    assert.deepEqual(row.findAllByProps({ className: "qm-chart-value" }).map(textOf), ["1.07M", "3.15M"]);
     const lines = plot.findAll((node) => node.props.className === "qm-chart-line");
     assert.equal(lines.filter((node) => node.type === "polyline").length, 3, "5h 两段 + 周一段");
     const overlay = plot.findByProps({ className: "qm-chart-overlay" });
     assert.equal(overlay.findAllByProps({ className: "qm-chart-dot" }).length, 6);
     assert.equal(overlay.findAllByProps({ className: "qm-chart-drop" }).length, 1, "5h 换了一次窗口");
     assert.deepEqual(row.findAllByProps({ className: "qm-chart-key" }).map(textOf), ["5h 剩余 38%", "周 剩余 80%"]);
-    assert.match(textOf(row.findByProps({ className: "qm-chart-foot" })), /近 7 天 4\.22M/);
+    assert.equal(row.findAllByProps({ className: "qm-chart-foot" }).length, 0, "窗口合计并入图顶，不再单开一行");
     // 悬停读数停在真实采样时刻
     await act(async () => plot.props.onPointerMove({
       clientX: 570, currentTarget: { getBoundingClientRect: () => ({ left: 0, width: 600 }) },
@@ -498,6 +510,7 @@ test("expanding a supplier shows today's ratio, the five-part split and one comb
     const barePlot = bareRow.findByProps({ "data-qm-chart": "opencode" });
     assert.equal(barePlot.findAll((node) => node.props.className === "qm-chart-bar").length, 2);
     assert.equal(barePlot.findAll((node) => node.props.className === "qm-chart-line").length, 0);
+    assert.deepEqual(bareRow.findAllByProps({ className: "qm-chart-value" }).map(textOf), ["1.07M", "3.15M"]);
     assert.equal(bareRow.findAllByProps({ className: "qm-chart-key" }).length, 0);
     await act(async () => tree.unmount()); tree = null;
 
@@ -508,6 +521,29 @@ test("expanding a supplier shows today's ratio, the five-part split and one comb
     await expand(tree, "opencode");
     await flush();
     assert.equal(tree.root.findAllByProps({ "data-qm-chart": "opencode" }).length, 0);
+  } finally { await act(async () => tree?.unmount()); }
+});
+
+test("dense daily history labels only the peak bar", async () => {
+  const usageDays = Array.from({ length: 12 }, (_, index) => {
+    const total = (index + 1) * 1_000;
+    return { day: `2026-10-${String(index + 1).padStart(2, "0")}`, total,
+      inputTokens: total, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, unsplitTokens: 0 };
+  });
+  const state = payload("OpenCode", [supplier([{ name: "周用量", kind: "win", pct: 2 }], {
+    todayTokens: 12_000, todayUsage: { inputTokens: 12_000 }, usageDays,
+  })]);
+  state.poll = { intervalSeconds: 60, retentionDays: 12, usageHistoryDays: 12 };
+  const host = client(async () => response(state), { clock: new Date(2026, 9, 13, 12).getTime() });
+  let tree;
+  try {
+    tree = await mount(host);
+    await open(tree);
+    await expand(tree, "opencode");
+    await flush();
+    const labels = rowOf(tree, "opencode").findAllByProps({ className: "qm-chart-value" });
+    assert.equal(labels.length, 1, "超过 10 根柱只标峰值，避免标签互相压住");
+    assert.equal(textOf(labels[0]), "12.0K");
   } finally { await act(async () => tree?.unmount()); }
 });
 
