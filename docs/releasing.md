@@ -48,7 +48,7 @@ git tag -a fork-vX.Y.Z -m "vX.Y.Z <要点逐条>"
 ## 4. 打包产物
 
 ```bash
-npm pack --pack-destination .                       # npm 安装包（58 个文件，含 lib/test/scripts）
+npm pack --pack-destination .                       # npm 安装包（60 个文件，含 lib/test/scripts）
 git archive --format=tar.gz --prefix=dsh-token-quota-X.Y.Z/ \
   -o dsh-token-quota-X.Y.Z-source.tar.gz fork-vX.Y.Z  # 源码快照（额外含 docs/ 与 .github/）
 ```

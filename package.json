@@ -1,6 +1,6 @@
 {
   "name": "dsh-token-quota",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "description": "DeepSeek Harness 用量监控：官方侧栏完整／紧凑卡片与单一面板的概览、供应商配置，按当前会话显示周期限额、逐币种余额与报告用量费用；保留凭据类别隔离、自动识别普通 API Key 与本地今日用量统计。",
   "icon": "./icon.svg",
   "author": "shxtmaker <https://github.com/shxtmaker>",

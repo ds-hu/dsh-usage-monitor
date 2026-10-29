@@ -2,11 +2,19 @@
 
 DeepSeek Harness 用量监控插件。查看当前会话对应供应商的周期限额、账户余额、报告费用和今日 Token 用量，支持 Windows 桌面端与 Web 界面。
 
-当前版本：**v2.3.0**。要求 **DSH ≥ 0.1.7-rc.2**；真实桌面及 Web 验收环境为 **DSH 0.2.0-rc.2**。
+当前版本：**v2.4.0**。要求 **DSH ≥ 0.1.7-rc.2**；真实桌面及 Web 验收环境为 **DSH 0.2.0-rc.2**。
 
 Plugins 面板中显示为 **用量监控**（英文 **Usage monitor**）：图标是根目录 `icon.svg`，标题与一句话说明来自 `locale/zh.json` 与 `locale/en.json` 的 `meta`。
 
 [GitHub 下载](https://github.com/shxtmaker/dsh-token-quota/releases/latest) · [问题反馈](https://github.com/shxtmaker/dsh-token-quota/issues)
+
+## v2.4.0 更新
+
+- 四个浮层收敛为单一面板：删除用量浮卡、供应商限额明细弹窗与用量统计弹窗，单击侧栏卡片直接打开「用量监控」；面板只剩「概览」「供应商」两个页签，原「设置」页签并入供应商页底部的折叠「全局设置」。卡片进入默认概览，宿主「设置 → 用量监控」进入默认供应商。
+- 明细与统计并入概览的供应商行：一次只展开一行，展开区给出分组指标表格、今日五分量分布与归一比例、DeepSeek 计费时段拆分与额度历史图；额度历史改为首次展开时按需取一次，同一面板会话内复用。
+- 默认视图不再常显解释文案：说明收进可展开的提示，`·` 拼接改为表格或徽标，词典键由 198 降到 158；会改变判断的告警（缺次年节假日、保存失败、取数失败）仍常显。
+- 移动端不再有独立分支：视口 < 1024px 也打开同一面板，不再有一次点击直达详情的窄屏路径。
+- 侧栏卡片补留白（横向 6px、上下 8px），长倒计时不再贴边被裁；修复指标表格列头与数值错位、展开明细重复画两条分布条、图表底部单独一行「近 N 天」，以及更新插件后样式仍是旧版的问题。
 
 ## v2.3.0 更新
 
@@ -72,7 +80,7 @@ Plugins 面板中显示为 **用量监控**（英文 **Usage monitor**）：图�
 
 ## 安装
 
-从 Release 下载 **`dsh-token-quota-2.3.0.tgz`**。该文件是插件安装包，`dsh-token-quota-2.3.0-source.tar.gz` 是源码包。插件包不包含 DeepSeek Harness；首次安装可能需要联网下载依赖。
+从 Release 下载 **`dsh-token-quota-2.4.0.tgz`**。该文件是插件安装包，`dsh-token-quota-2.4.0-source.tar.gz` 是源码包。插件包不包含 DeepSeek Harness；首次安装可能需要联网下载依赖。
 
 ### Windows 桌面端
 
@@ -80,7 +88,7 @@ Plugins 面板中显示为 **用量监控**（英文 **Usage monitor**）：图�
 
 ```powershell
 $desktopCli = 'D:\AI\DeepSeek- Harness\resources\runtime\cli\bin\dsh.cmd'
-$archivePath = (Resolve-Path './dsh-token-quota-2.3.0.tgz').Path
+$archivePath = (Resolve-Path './dsh-token-quota-2.4.0.tgz').Path
 & $desktopCli plugin --profile desktop add "file:$archivePath"
 & $desktopCli plugin --profile desktop list --depth 0
 ```
@@ -94,14 +102,14 @@ $archivePath = (Resolve-Path './dsh-token-quota-2.3.0.tgz').Path
 Linux / macOS：
 
 ```bash
-dsh plugin --profile web add "file:$(pwd)/dsh-token-quota-2.3.0.tgz"
+dsh plugin --profile web add "file:$(pwd)/dsh-token-quota-2.4.0.tgz"
 dsh --profile web
 ```
 
 Windows PowerShell：
 
 ```powershell
-$archivePath = (Resolve-Path './dsh-token-quota-2.3.0.tgz').Path
+$archivePath = (Resolve-Path './dsh-token-quota-2.4.0.tgz').Path
 dsh plugin --profile web add "file:$archivePath"
 dsh --profile web
 ```
@@ -234,8 +242,8 @@ npm pack
 真实宿主验收使用独立数据目录与 profile，不修改日常配置：
 
 ```powershell
-npm run test:desktop -- --app 'C:/path/DeepSeek Harness.exe' --package 'C:/path/dsh-token-quota-2.3.0.tgz' --output '.scratch/desktop-v2-check'
-node scripts/verify-web.mjs --app 'C:/path/DeepSeek Harness.exe' --package 'C:/path/dsh-token-quota-2.3.0.tgz' --output '.scratch/web-v2-check'
+npm run test:desktop -- --app 'C:/path/DeepSeek Harness.exe' --package 'C:/path/dsh-token-quota-2.4.0.tgz' --output '.scratch/desktop-v2-check'
+node scripts/verify-web.mjs --app 'C:/path/DeepSeek Harness.exe' --package 'C:/path/dsh-token-quota-2.4.0.tgz' --output '.scratch/web-v2-check'
 npm run test:lifecycle -- --app 'C:/path/DeepSeek Harness.exe' --output '.scratch/lifecycle-v2-check'
 ```
 
