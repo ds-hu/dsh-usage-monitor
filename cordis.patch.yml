@@ -7,4 +7,4 @@
 # served at /plugins/<id>/client.js) load in the shared Web/Desktop GUI.
 - insert:
     - id: dsh-token-quota
-      name: 'dsh-token-quota'
+      name: '@ds-hu/dsh-token-quota'

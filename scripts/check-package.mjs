@@ -41,6 +41,6 @@ assert.equal(pkg.icon, "./icon.svg");
 for (const required of ["icon.svg", "locale/en.json", "locale/zh.json"]) {
   assert.ok(paths.has(required), `产物缺少插件展示元信息 ${required}`);
 }
-assert.equal(manifest.name, "dsh-token-quota");
+assert.equal(manifest.name, "@ds-hu/dsh-token-quota");
 assert.ok(!manifest.files.some((file) => file.path.startsWith("node_modules/") || file.path.startsWith("test-results/")));
 console.log(`打包验证通过：${manifest.files.length} 个文件，${manifest.size} 字节`);

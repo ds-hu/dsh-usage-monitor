@@ -80,7 +80,7 @@ Plugins 面板中显示为 **用量监控**（英文 **Usage monitor**）：图�
 
 ## 安装
 
-从 Release 下载 **`dsh-token-quota-2.4.0.tgz`**。该文件是插件安装包，`dsh-token-quota-2.4.0-source.tar.gz` 是源码包。插件包不包含 DeepSeek Harness；首次安装可能需要联网下载依赖。
+插件有两个来源：npm 包 **`@ds-hu/dsh-token-quota`**，或 Release 里的安装包 **`dsh-token-quota-2.4.0.tgz`**（源码包为 `dsh-token-quota-2.4.0-source.tar.gz`）。插件包不包含 DeepSeek Harness；首次安装可能需要联网下载依赖。
 
 ### Windows 桌面端
 
@@ -93,11 +93,26 @@ $archivePath = (Resolve-Path './dsh-token-quota-2.4.0.tgz').Path
 & $desktopCli plugin --profile desktop list --depth 0
 ```
 
+插件已在 npm 上，用一条命令安装即可，不必先下载压缩包：
+
+```powershell
+& $desktopCli plugin --profile desktop add @ds-hu/dsh-token-quota
+```
+
 重新打开桌面应用，展开左侧栏即可看到用量组件；也可从「设置 → 用量监控」进入。安装到 `web` profile 的插件不会自动出现在桌面端。桌面侧栏收起后组件随侧栏隐藏，展开后恢复。
 
 ### Web / CLI
 
 先安装 DeepSeek Harness，确认 `dsh --version` 能正常运行。以下示例使用 `web` profile；使用其他 profile 时请替换名称。
+
+从 npm 安装：
+
+```bash
+dsh plugin --profile web add @ds-hu/dsh-token-quota
+dsh --profile web
+```
+
+从 Release 的压缩包安装：
 
 Linux / macOS：
 

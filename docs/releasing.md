@@ -1,6 +1,6 @@
 # 发布流程
 
-适用于 `dsh-token-quota` 的版本发布。远端：`origin` = GitHub `ds-hu/dsh-usage-monitor`（fork，用于发布）；
+适用于 `@ds-hu/dsh-token-quota` 的版本发布。远端：`origin` = GitHub `ds-hu/dsh-usage-monitor`（fork，用于发布）；
 `upstream` = `shxtmaker/dsh-token-quota`，只拉不推。发布标签带 `fork-` 前缀。
 
 ## 0. 前置检查
@@ -22,7 +22,7 @@ git diff --check
 
 - `package.json` 的 `version`
 - `package-lock.json` 顶层的 `version` 与 `packages[""].version`
-- `README.md`：`当前版本：**vX.Y.Z**` 与安装示例中的 `dsh-token-quota-X.Y.Z.tgz`
+- `README.md`：`当前版本：**vX.Y.Z**` 与安装示例中的 `ds-hu-dsh-token-quota-X.Y.Z.tgz`
 
 语义化约定：修复类改动递增补丁号；新增能力/架构调整递增次版本号；不引入破坏性变更。
 `usage.json` 自 2.2.0 起为**版本 2**：版本 1 文件读取时自动兼容（旧总数归入「未细分」），
@@ -49,6 +49,7 @@ git tag -a fork-vX.Y.Z -m "vX.Y.Z <要点逐条>"
 
 ```bash
 npm pack --pack-destination .                       # npm 安装包（60 个文件，含 lib/test/scripts）
+                                                    # 产物名 ds-hu-dsh-token-quota-X.Y.Z.tgz：scoped 包名带 owner 前缀
 git archive --format=tar.gz --prefix=dsh-token-quota-X.Y.Z/ \
   -o dsh-token-quota-X.Y.Z-source.tar.gz fork-vX.Y.Z  # 源码快照（额外含 docs/ 与 .github/）
 ```
@@ -58,7 +59,7 @@ git archive --format=tar.gz --prefix=dsh-token-quota-X.Y.Z/ \
 `*.tgz` 与 `*.tar.gz` 已在 `.gitignore` 中，产物不进版本库。发布前用产物本身再跑一遍，避免「只测源码」：
 
 ```bash
-tar -xzf dsh-token-quota-X.Y.Z.tgz -C .scratch/unpack
+tar -xzf ds-hu-dsh-token-quota-X.Y.Z.tgz -C .scratch/unpack
 cd .scratch/unpack/package && npm install --ignore-scripts && npm run test:pack
 for f in test/*.mjs; do node --test-reporter=tap "$f"; done   # 受限沙箱下不要用 npm test
 ```
@@ -85,7 +86,41 @@ git push origin fork-vX.Y.Z
   容易误判，推送前用 `git remote -v` 确认一次。
 - 推送是外部可见且难以撤回的操作：确认版本号、目标远端与提交内容后再执行。
 
-## 6. 发布说明
+推 `fork-vX.Y.Z` 标签会触发 `.github/workflows/publish.yml`，发布到 npm——见下一节。
+
+## 6. npm 发布（CI）
+
+发布由 CI 做，不在本机 `npm publish`：标签推送时它装依赖、跑 `npm test` 与 `npm run test:pack`、
+核对标签与 `package.json` 同版本，然后 `npm publish --access public`，并自动附上 provenance。
+认证是 OIDC 可信发布，仓库里不存 npm token。
+
+一次性建立信任关系（在仓库根目录执行，需要 npm 的 2FA 确认）：
+
+```bash
+npm login
+npm trust github @ds-hu/dsh-token-quota \
+  --file publish.yml \
+  --repo ds-hu/dsh-usage-monitor --allow-publish
+npm trust list @ds-hu/dsh-token-quota
+```
+
+`--file` 只收文件名，写成 `.github/workflows/publish.yml` 会被
+`GitHub Actions workflow must be just a file not a path` 拒掉。`--repo` 必须是
+`ds-hu/dsh-usage-monitor`：文件名或仓库任一变化都要重新建一次信任关系。`package.json` 的
+`repository` 仍指向上游，命令会警告两者不一致——预期如此，确认继续即可。
+
+这条配置 48 小时内没有一次成功发布就会过期失效，所以建好后当场推标签。
+
+发布后核对：
+
+```bash
+npm view @ds-hu/dsh-token-quota version
+```
+
+发布失败要重跑时用 `workflow_dispatch`：它按 `package.json` 的版本发布，不核对标签，所以只能用于
+补发已经打过的那个版本。
+
+## 7. 发布说明
 
 在注解标签的说明里写清（GitHub 的 tag 页面会展示它）：行为变更清单、验证证据（测试项数、打包文件数、
 基准数值）、以及**验证边界**（未在真实桌面端验收、未接真实 DSH、未访问真实计费账户等）。
