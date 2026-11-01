@@ -2,11 +2,16 @@
 
 DeepSeek Harness 用量监控插件。查看当前会话对应供应商的周期限额、账户余额、报告费用和今日 Token 用量，支持 Windows 桌面端与 Web 界面。
 
-当前版本：**v2.4.0**。要求 **DSH ≥ 0.1.7-rc.2**；真实桌面及 Web 验收环境为 **DSH 0.2.0-rc.2**。
+当前版本：**v2.4.1**。要求 **DSH ≥ 0.1.7-rc.2**；真实桌面及 Web 验收环境为 **DSH 0.2.0-rc.2**。
 
 Plugins 面板中显示为 **用量监控**（英文 **Usage monitor**）：图标是根目录 `icon.svg`，标题与一句话说明来自 `locale/zh.json` 与 `locale/en.json` 的 `meta`。
 
 [GitHub 下载](https://github.com/shxtmaker/dsh-token-quota/releases/latest) · [问题反馈](https://github.com/shxtmaker/dsh-token-quota/issues)
+
+## v2.4.1 更新
+
+- 包名改为 `@ds-hu/dsh-token-quota`：`dsh plugin add @ds-hu/dsh-token-quota` 直接安装，不必再下载压缩包；插件 id、设置命名空间与数据目录不变，升级不需要迁移。
+- 发布改由 CI 执行：`fork-vX.Y.Z` 标签触发测试与 `npm publish`，凭据走 OIDC 可信发布并附 provenance，仓库里不存 npm token。
 
 ## v2.4.0 更新
 

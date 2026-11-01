@@ -6,6 +6,17 @@
 更早版本（v2.0.5 及以前）的变更记录在 [README](README.md) 的「vX.Y.Z 更新」小节与
 [docs/](docs/) 下的对应执行记录中，本文件自 2.1.0 起逐版本记录。
 
+## [2.4.1] - 2026-11-01
+
+### 变更
+
+- **包名改为 `@ds-hu/dsh-token-quota`，改由 npm 分发**：加 scope 与上游 `shxtmaker/dsh-token-quota` 区分，
+  `dsh plugin add @ds-hu/dsh-token-quota` 一条命令即可安装。插件 id、设置命名空间与
+  `$DSH_HOME/dsh-token-quota/` 数据目录不变，从 2.4.0 升级不需要迁移；此前从未在 npm 发布过同名包，
+  不存在需要迁移的 npm 安装。
+- **发布由 CI 执行**：`fork-vX.Y.Z` 标签触发 `.github/workflows/publish.yml`，跑完 `npm test` 与打包契约检查、
+  核对标签与 `package.json` 同版本后，经 OIDC 可信发布到 npm 并自动附 provenance；仓库里不存 npm token。
+
 ## [2.4.0] - 2026-10-29
 
 ### 变更
