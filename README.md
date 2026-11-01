@@ -6,7 +6,7 @@ DeepSeek Harness 用量监控插件。查看当前会话对应供应商的周期
 
 Plugins 面板中显示为 **用量监控**（英文 **Usage monitor**）：图标是根目录 `icon.svg`，标题与一句话说明来自 `locale/zh.json` 与 `locale/en.json` 的 `meta`。
 
-[GitHub 下载](https://github.com/shxtmaker/dsh-token-quota/releases/latest) · [问题反馈](https://github.com/shxtmaker/dsh-token-quota/issues)
+[npm](https://www.npmjs.com/package/@ds-hu/dsh-token-quota) · [问题反馈](https://github.com/ds-hu/dsh-usage-monitor/issues)
 
 ## v2.4.1 更新
 
@@ -85,7 +85,7 @@ Plugins 面板中显示为 **用量监控**（英文 **Usage monitor**）：图�
 
 ## 安装
 
-插件有两个来源：npm 包 **`@ds-hu/dsh-token-quota`**，或 Release 里的安装包 **`dsh-token-quota-2.4.0.tgz`**（源码包为 `dsh-token-quota-2.4.0-source.tar.gz`）。插件包不包含 DeepSeek Harness；首次安装可能需要联网下载依赖。
+插件从 npm 安装：**`@ds-hu/dsh-token-quota`**。没有网络时可以先 `npm pack` 打出 `ds-hu-dsh-token-quota-2.4.1.tgz`，用压缩包离线安装。插件包不包含 DeepSeek Harness；首次安装可能需要联网下载依赖。
 
 ### Windows 桌面端
 
@@ -93,15 +93,15 @@ Plugins 面板中显示为 **用量监控**（英文 **Usage monitor**）：图�
 
 ```powershell
 $desktopCli = 'D:\AI\DeepSeek- Harness\resources\runtime\cli\bin\dsh.cmd'
-$archivePath = (Resolve-Path './dsh-token-quota-2.4.0.tgz').Path
-& $desktopCli plugin --profile desktop add "file:$archivePath"
+& $desktopCli plugin --profile desktop add @ds-hu/dsh-token-quota
 & $desktopCli plugin --profile desktop list --depth 0
 ```
 
-插件已在 npm 上，用一条命令安装即可，不必先下载压缩包：
+离线安装时把包名换成压缩包路径：
 
 ```powershell
-& $desktopCli plugin --profile desktop add @ds-hu/dsh-token-quota
+$archivePath = (Resolve-Path './ds-hu-dsh-token-quota-2.4.1.tgz').Path
+& $desktopCli plugin --profile desktop add "file:$archivePath"
 ```
 
 重新打开桌面应用，展开左侧栏即可看到用量组件；也可从「设置 → 用量监控」进入。安装到 `web` profile 的插件不会自动出现在桌面端。桌面侧栏收起后组件随侧栏隐藏，展开后恢复。
@@ -117,19 +117,19 @@ dsh plugin --profile web add @ds-hu/dsh-token-quota
 dsh --profile web
 ```
 
-从 Release 的压缩包安装：
+离线安装（先 `npm pack` 得到压缩包）：
 
 Linux / macOS：
 
 ```bash
-dsh plugin --profile web add "file:$(pwd)/dsh-token-quota-2.4.0.tgz"
+dsh plugin --profile web add "file:$(pwd)/ds-hu-dsh-token-quota-2.4.1.tgz"
 dsh --profile web
 ```
 
 Windows PowerShell：
 
 ```powershell
-$archivePath = (Resolve-Path './dsh-token-quota-2.4.0.tgz').Path
+$archivePath = (Resolve-Path './ds-hu-dsh-token-quota-2.4.1.tgz').Path
 dsh plugin --profile web add "file:$archivePath"
 dsh --profile web
 ```
@@ -141,8 +141,8 @@ dsh --profile web
 ### 从源码安装
 
 ```bash
-git clone https://github.com/shxtmaker/dsh-token-quota.git
-cd dsh-token-quota
+git clone https://github.com/ds-hu/dsh-usage-monitor.git
+cd dsh-usage-monitor
 npm ci
 dsh plugin --profile web add "link:$(pwd)"
 dsh --profile web
@@ -262,14 +262,20 @@ npm pack
 真实宿主验收使用独立数据目录与 profile，不修改日常配置：
 
 ```powershell
-npm run test:desktop -- --app 'C:/path/DeepSeek Harness.exe' --package 'C:/path/dsh-token-quota-2.4.0.tgz' --output '.scratch/desktop-v2-check'
-node scripts/verify-web.mjs --app 'C:/path/DeepSeek Harness.exe' --package 'C:/path/dsh-token-quota-2.4.0.tgz' --output '.scratch/web-v2-check'
+npm run test:desktop -- --app 'C:/path/DeepSeek Harness.exe' --package 'C:/path/ds-hu-dsh-token-quota-2.4.1.tgz' --output '.scratch/desktop-v2-check'
+node scripts/verify-web.mjs --app 'C:/path/DeepSeek Harness.exe' --package 'C:/path/ds-hu-dsh-token-quota-2.4.1.tgz' --output '.scratch/web-v2-check'
 npm run test:lifecycle -- --app 'C:/path/DeepSeek Harness.exe' --output '.scratch/lifecycle-v2-check'
 ```
 
 输出目录需为未使用过的目录。供应商解析测试使用模拟响应；真实 Desktop 与 Web 验收检查安装、界面、配置持久化和重新扫描，不发送聊天消息或配置真实供应商密钥。
 
 [桌面兼容性说明](docs/windows-desktop-adaptation.md) · [单一面板重构记录](docs/single-panel-refactor-execution.md) · [ADR-0002](docs/adr/0002-single-monitor-surface.md) · [侧栏与设置实施记录](docs/sidebar-settings-iteration-plan.md)
+
+## 来源与致谢
+
+本仓库是 [shxtmaker/dsh-token-quota](https://github.com/shxtmaker/dsh-token-quota) 的 fork，在 npm 上以
+`@ds-hu/dsh-token-quota` 发布。插件 id、设置命名空间、数据目录与各家供应商的查询规则都沿用上游，
+行为变更逐条记在 [CHANGELOG](CHANGELOG.md)。上游没有 npm 包，需要它的原始版本请用上游的 Releases。
 
 ## 许可证
 

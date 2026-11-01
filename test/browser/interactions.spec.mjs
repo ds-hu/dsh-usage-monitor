@@ -352,12 +352,18 @@ test("expanding a supplier shows token bars and remaining-quota lines in one cha
   await mkdir(statsDirectory, { recursive: true });
   await page.screenshot({ path: resolve(statsDirectory, "stats-combined-chart.png"), fullPage: true });
 
-  // 线上的形状不给数字：悬停把那一刻的读数放进浮层（最近一次采样，不插值），并落一条十字线
+  // 线上的形状不给数字：悬停把那一刻的读数放进浮层（最近一次采样，不插值），并落一条十字线。
+  // 落点取最后一根柱（今天）的中心，而不是「绘图区宽度的 94%」：横轴终点是此刻，6% ≈ 10 小时，
+  // 凌晨跑的 CI 会因此退回昨天（UTC 03:02 那次落到 10-31 18:12，浮层里没有 token 行）。
+  // 柱的坐标本身就是「今天」，与运行时刻无关。
   await plot.scrollIntoViewIfNeeded();
-  const box = await plot.boundingBox();
-  await page.mouse.move(box.x + box.width * 0.94, box.y + box.height / 2);
+  const todayLabel = dayLabels(7).at(-1).slice(5);
+  const lastBar = await plot.locator("rect.qm-chart-bar").last().boundingBox();
+  const plotBox = await plot.boundingBox();
+  await page.mouse.move(lastBar.x + lastBar.width / 2, plotBox.y + plotBox.height / 2);
   const tip = row.locator(".qm-chart-tip");
   await expect(tip).toBeVisible();
+  await expect(tip).toContainText(todayLabel);
   await expect(tip).toContainText("剩余");
   await expect(tip).toContainText("3.15M token");
   await expect(plot.locator(".qm-chart-cursor")).toHaveCount(1);
