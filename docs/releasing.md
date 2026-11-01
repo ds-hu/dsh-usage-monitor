@@ -106,8 +106,11 @@ npm trust list @ds-hu/dsh-token-quota
 
 `--file` 只收文件名，写成 `.github/workflows/publish.yml` 会被
 `GitHub Actions workflow must be just a file not a path` 拒掉。`--repo` 必须是
-`ds-hu/dsh-usage-monitor`：文件名或仓库任一变化都要重新建一次信任关系。`package.json` 的
-`repository` 仍指向上游，命令会警告两者不一致——预期如此，确认继续即可。
+`ds-hu/dsh-usage-monitor`：文件名或仓库任一变化都要重新建一次信任关系。
+
+`package.json` 的 `repository.url` 必须指向同一仓库：registry 会拿它和 provenance 里的
+仓库比对，不一致直接 `422 … Error verifying sigstore provenance bundle: Failed to validate
+repository information`（2.4.1 第一趟就栽在这里，当时 `repository` 还指着上游）。
 
 这条配置 48 小时内没有一次成功发布就会过期失效，所以建好后当场推标签。
 

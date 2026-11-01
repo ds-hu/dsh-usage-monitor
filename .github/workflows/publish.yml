@@ -10,7 +10,6 @@
 #
 # `--file` 只收文件名：写成 .github/workflows/publish.yml 会被
 # "GitHub Actions workflow must be just a file not a path" 拒掉。
-# package.json 里的 repository 还指着上游，这条命令会警告仓库不一致——预期如此，继续即可。
 #
 # 这条配置若 48 小时内没有一次成功发布就会过期失效，所以建好后要当场打标签；
 # `npm trust list @ds-hu/dsh-token-quota` 看当前生效的关系。
