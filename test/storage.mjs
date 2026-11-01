@@ -26,6 +26,11 @@ import {
   usageFilePath,
 } from "../lib/storage.js";
 
+// 峰谷拆分按「宿主本地小时桶 → 北京时刻」推导，本文件的用例用北京墙钟构造小时桶，
+// 断言值只在 +08:00 的宿主下成立。CI 跑在 UTC，09 点的桶会被算成北京 17 点（谷价），
+// 所以在这里把宿主时区钉住 —— 同一进程内改 TZ 对后续 new Date() 立即生效（Windows 亦然）。
+process.env.TZ = "Asia/Shanghai";
+
 const dir = mkdtempSync(join(tmpdir(), "qm-storage-"));
 const file = usageFilePath(dir);
 
