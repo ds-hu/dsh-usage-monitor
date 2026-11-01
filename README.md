@@ -85,7 +85,7 @@ Plugins 面板中显示为 **用量监控**（英文 **Usage monitor**）：图�
 
 ## 安装
 
-插件从 npm 安装：**`@ds-hu/dsh-token-quota`**。没有网络时可以先 `npm pack` 打出 `ds-hu-dsh-token-quota-2.4.1.tgz`，用压缩包离线安装。插件包不包含 DeepSeek Harness；首次安装可能需要联网下载依赖。
+插件从 npm 安装：**`@ds-hu/dsh-token-quota`**。离线部署时可以在源码目录 `npm pack` 打出 `ds-hu-dsh-token-quota-2.4.1.tgz`，用压缩包安装。插件包不包含 DeepSeek Harness；首次安装可能需要联网下载依赖。
 
 ### Windows 桌面端
 
@@ -269,7 +269,7 @@ npm run test:lifecycle -- --app 'C:/path/DeepSeek Harness.exe' --output '.scratc
 
 输出目录需为未使用过的目录。供应商解析测试使用模拟响应；真实 Desktop 与 Web 验收检查安装、界面、配置持久化和重新扫描，不发送聊天消息或配置真实供应商密钥。
 
-[桌面兼容性说明](docs/windows-desktop-adaptation.md) · [单一面板重构记录](docs/single-panel-refactor-execution.md) · [ADR-0002](docs/adr/0002-single-monitor-surface.md) · [侧栏与设置实施记录](docs/sidebar-settings-iteration-plan.md)
+[桌面兼容性说明](docs/windows-desktop-adaptation.md) · [单一面板重构记录](docs/single-panel-refactor-execution.md) · [ADR-0002](docs/adr/0002-single-monitor-surface.md) · [侧栏与设置实施记录](docs/sidebar-settings-iteration-plan.md) · [v2.4.1 发布记录](docs/v2.4.1-release-execution.md)
 
 ## 来源与致谢
 
