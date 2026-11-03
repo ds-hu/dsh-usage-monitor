@@ -2,11 +2,18 @@
 
 DeepSeek Harness 用量监控插件。查看当前会话对应供应商的周期限额、账户余额、报告费用和今日 Token 用量，支持 Windows 桌面端与 Web 界面。
 
-当前版本：**v2.4.1**。要求 **DSH ≥ 0.1.7-rc.2**；真实桌面及 Web 验收环境为 **DSH 0.2.0-rc.2**。
+当前版本：**v2.5.0**。要求 **DSH ≥ 0.1.7-rc.2**；真实桌面及 Web 验收环境为 **DSH 0.2.0-rc.2**。
 
 Plugins 面板中显示为 **用量监控**（英文 **Usage monitor**）：图标是根目录 `icon.svg`，标题与一句话说明来自 `locale/zh.json` 与 `locale/en.json` 的 `meta`。
 
 [npm](https://www.npmjs.com/package/@ds-hu/dsh-token-quota) · [问题反馈](https://github.com/ds-hu/dsh-usage-monitor/issues)
+
+## v2.5.0 更新
+
+- 展开行的「Today」换成选择器：可切「今天 / 近 7 天」，token 数、归一比例与五分量分布条一起换成该区间的合计；图表固定 7 天，不跟着变。
+- 同一行右侧给出各窗口的 token 估算（5h / 周 / 月），可在「剩余」与「套餐总量」之间切换；悬停显示取样区间、分子分母与 ±1pp 区间。
+- 估算按取样内的斜率折算（本地 token ÷ Δpp），不再除以累计已用%：月窗口比本地留存长时，旧算法只拿得到最近几天的 token，会把总量算成一半。
+- 修复图表柱值数字被折线压花：数字底下垫一层卡片底色，折线从数字背后穿过。
 
 ## v2.4.1 更新
 
@@ -85,7 +92,7 @@ Plugins 面板中显示为 **用量监控**（英文 **Usage monitor**）：图�
 
 ## 安装
 
-插件从 npm 安装：**`@ds-hu/dsh-token-quota`**。离线部署时可以在源码目录 `npm pack` 打出 `ds-hu-dsh-token-quota-2.4.1.tgz`，用压缩包安装。插件包不包含 DeepSeek Harness；首次安装可能需要联网下载依赖。
+插件从 npm 安装：**`@ds-hu/dsh-token-quota`**。离线部署时可以在源码目录 `npm pack` 打出 `ds-hu-dsh-token-quota-2.5.0.tgz`，用压缩包安装。插件包不包含 DeepSeek Harness；首次安装可能需要联网下载依赖。
 
 ### Windows 桌面端
 
@@ -100,7 +107,7 @@ $desktopCli = 'D:\AI\DeepSeek- Harness\resources\runtime\cli\bin\dsh.cmd'
 离线安装时把包名换成压缩包路径：
 
 ```powershell
-$archivePath = (Resolve-Path './ds-hu-dsh-token-quota-2.4.1.tgz').Path
+$archivePath = (Resolve-Path './ds-hu-dsh-token-quota-2.5.0.tgz').Path
 & $desktopCli plugin --profile desktop add "file:$archivePath"
 ```
 
@@ -122,14 +129,14 @@ dsh --profile web
 Linux / macOS：
 
 ```bash
-dsh plugin --profile web add "file:$(pwd)/ds-hu-dsh-token-quota-2.4.1.tgz"
+dsh plugin --profile web add "file:$(pwd)/ds-hu-dsh-token-quota-2.5.0.tgz"
 dsh --profile web
 ```
 
 Windows PowerShell：
 
 ```powershell
-$archivePath = (Resolve-Path './ds-hu-dsh-token-quota-2.4.1.tgz').Path
+$archivePath = (Resolve-Path './ds-hu-dsh-token-quota-2.5.0.tgz').Path
 dsh plugin --profile web add "file:$archivePath"
 dsh --profile web
 ```
@@ -262,14 +269,14 @@ npm pack
 真实宿主验收使用独立数据目录与 profile，不修改日常配置：
 
 ```powershell
-npm run test:desktop -- --app 'C:/path/DeepSeek Harness.exe' --package 'C:/path/ds-hu-dsh-token-quota-2.4.1.tgz' --output '.scratch/desktop-v2-check'
-node scripts/verify-web.mjs --app 'C:/path/DeepSeek Harness.exe' --package 'C:/path/ds-hu-dsh-token-quota-2.4.1.tgz' --output '.scratch/web-v2-check'
+npm run test:desktop -- --app 'C:/path/DeepSeek Harness.exe' --package 'C:/path/ds-hu-dsh-token-quota-2.5.0.tgz' --output '.scratch/desktop-v2-check'
+node scripts/verify-web.mjs --app 'C:/path/DeepSeek Harness.exe' --package 'C:/path/ds-hu-dsh-token-quota-2.5.0.tgz' --output '.scratch/web-v2-check'
 npm run test:lifecycle -- --app 'C:/path/DeepSeek Harness.exe' --output '.scratch/lifecycle-v2-check'
 ```
 
 输出目录需为未使用过的目录。供应商解析测试使用模拟响应；真实 Desktop 与 Web 验收检查安装、界面、配置持久化和重新扫描，不发送聊天消息或配置真实供应商密钥。
 
-[桌面兼容性说明](docs/windows-desktop-adaptation.md) · [单一面板重构记录](docs/single-panel-refactor-execution.md) · [ADR-0002](docs/adr/0002-single-monitor-surface.md) · [侧栏与设置实施记录](docs/sidebar-settings-iteration-plan.md) · [v2.4.1 发布记录](docs/v2.4.1-release-execution.md)
+[桌面兼容性说明](docs/windows-desktop-adaptation.md) · [单一面板重构记录](docs/single-panel-refactor-execution.md) · [ADR-0002](docs/adr/0002-single-monitor-surface.md) · [侧栏与设置实施记录](docs/sidebar-settings-iteration-plan.md) · [v2.5.0 发布记录](docs/v2.5.0-release-execution.md)
 
 ## 来源与致谢
 
