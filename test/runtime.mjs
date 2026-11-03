@@ -7,7 +7,7 @@ import { apply, Config } from "../lib/index.js";
 import { createCtx } from "./harness.mjs";
 import { PROVIDERS } from "../lib/providers.js";
 import * as season from "../lib/season.js";
-import { dayLabelOf } from "../lib/storage.js";
+import { dayLabelOf, hourKeyOf } from "../lib/storage.js";
 
 test("plugin instances do not share traffic and dispose releases event handlers", async () => {
   const originalHome = process.env.DSH_HOME;
@@ -320,6 +320,61 @@ test("a successful query appends a quota sample, and an unchanged value does not
   const saved = JSON.parse(readFileSync(join(home, "dsh-token-quota", "quota.json"), "utf8"));
   assert.equal(saved.version, 1);
   assert.deepEqual(saved.suppliers.opencode["window.rolling"].map(([, pct]) => pct), [12, 40]);
+});
+
+test("窗口估算按 Δpp 取样：分子只覆盖本地还留着的桶，左端落在窗口起点", async (t) => {
+  const previousHome = process.env.DSH_HOME;
+  const previousFetch = globalThis.fetch;
+  const home = mkdtempSync(join(tmpdir(), "qm-window-est-"));
+  process.env.DSH_HOME = home;
+  const now = Date.now();
+  const hour = 3600_000;
+  mkdirSync(join(home, "dsh-token-quota"), { recursive: true });
+  writeFileSync(join(home, "dsh-token-quota", "usage.json"), JSON.stringify({
+    version: 2,
+    buckets: { opencode: {
+      [hourKeyOf(new Date(now - 2 * hour))]: { inputTokens: 100 },
+      [hourKeyOf(new Date(now - 20 * hour))]: { inputTokens: 500 },
+      [hourKeyOf(new Date(now - 100 * hour))]: { inputTokens: 9_999 },
+    } },
+  }), "utf8");
+  // 额度折线：rolling 只记了本窗口的 30→40；weekly 从 40 小时前的 0 一路涨到 14
+  writeFileSync(join(home, "dsh-token-quota", "quota.json"), JSON.stringify({
+    version: 1,
+    suppliers: { opencode: {
+      "window.rolling": [[now - 3 * hour, 30], [now - hour, 40]],
+      "window.weekly": [[now - 40 * hour, 0], [now - 3 * hour, 10], [now - hour, 14]],
+    } },
+  }), "utf8");
+  globalThis.fetch = async (url) => {
+    if (!String(url).includes("/zen/go/v1/usage")) return { ok: false, status: 401, text: async () => "" };
+    return {
+      ok: true, status: 200, text: async () => JSON.stringify({ usage: {
+        // rolling：重置在 2 小时后、窗口 5h ⇒ 左缘 now−3h，与第一条采样对齐
+        rolling: { percent: 40, resetsAt: new Date(now + 2 * hour).toISOString() },
+        // weekly：重置在 4 天后、窗口 7d ⇒ 左缘 now−3d，样本从 40 小时前开始算
+        weekly: { percent: 14, resetsAt: new Date(now + 4 * 86400_000).toISOString() },
+      } }),
+    };
+  };
+  const harness = createCtx({ schema: Config, config: { suppliers: { opencode: { enabled: true, apiKey: "sk-test" } } } });
+  const dispose = apply(harness.ctx, harness.configRef);
+  t.after(() => {
+    dispose();
+    globalThis.fetch = previousFetch;
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  await harness.call("/api/dsh-token-quota/refresh", {});
+  const opencode = (await harness.call("/api/dsh-token-quota/state")).suppliers.find((s) => s.id === "opencode");
+  const byKey = Object.fromEntries(opencode.entries.map((entry) => [entry.key, entry]));
+  assert.equal(byKey["window.rolling"].windowMs, 5 * 3600_000, "窗口长度由供应商声明");
+  // 5h：取样 = [now−3h, now−1h]，只有 2 小时前那一桶（100）落在里面
+  assert.deepEqual(byKey["window.rolling"].estimate, { from: now - 3 * hour, to: now - hour, tokens: 100, dPct: 10 });
+  // 周：取样从 40 小时前开始，2 小时前与 20 小时前两桶都算（600），100 小时前那桶在左缘之外
+  assert.deepEqual(byKey["window.weekly"].estimate, { from: now - 40 * hour, to: now - hour, tokens: 600, dPct: 14 });
 });
 
 test("a retried attempt adds to the same step instead of replacing it", async (t) => {

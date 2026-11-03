@@ -5,10 +5,11 @@ import vm from "node:vm";
 import React from "react";
 import { create, act } from "react-test-renderer";
 
+const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const source = readFileSync(new URL("../lib/client.js", import.meta.url), "utf8");
 /** 使用实际无构建客户端与真实 React，仅替换宿主槽位、网络、时钟和本地存储。 */
 function client(fetch, { storage = new Map(), search = "", clock = null, mobile = false } = {}) {
-  let plugin, dictionary;
+  let plugin, dictionary, registeredId;
   const locales = {};
   const slots = {}, timers = [], listeners = {}, cleanups = [];
   const subscribe = (type, fn) => (listeners[type] ||= new Set()).add(fn);
@@ -21,7 +22,7 @@ function client(fetch, { storage = new Map(), search = "", clock = null, mobile 
     body: {}, visibilityState: "visible", addEventListener: subscribe, removeEventListener: unsubscribe,
   };
   const window = {
-    __ModuleLoader__: { load({ factory }) { plugin = factory((id) => id === "react" ? React : { createPortal: (child) => child }); } },
+    __ModuleLoader__: { load({ id, factory }) { registeredId = id; plugin = factory((id) => id === "react" ? React : { createPortal: (child) => child }); } },
     location: { search }, addEventListener: subscribe, removeEventListener: unsubscribe,
     localStorage: { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
     // 视口断点替身：mobile 决定 matchMedia 的结果，宿主浏览器才有真实实现。
@@ -50,7 +51,7 @@ function client(fetch, { storage = new Map(), search = "", clock = null, mobile 
     inject(name, fn) { return fn(); }, register(descriptor, component) { slots[descriptor.name ?? descriptor.key] = component; },
   } });
   const t = (key, params = {}) => String(dictionary[key] ?? key).replace(/\{(\w+)\}/g, (_, k) => params[k] ?? `{${k}}`);
-  return { Footer: slots["sidebar.footer.action"], Page: slots["settings.section"], t, locales, timers, storage, helpers: plugin.__test, setNow: context.__setNow };
+  return { registeredId, Footer: slots["sidebar.footer.action"], Page: slots["settings.section"], t, locales, timers, storage, helpers: plugin.__test, setNow: context.__setNow };
 }
 const textOf = (node) => {
   const walk = (child) => Array.isArray(child) ? child.map(walk).join("") : typeof child === "string" || typeof child === "number" ? String(child) : child?.children ? walk(child.children) : "";
@@ -81,6 +82,13 @@ const flush = async () => { await act(async () => { await Promise.resolve(); });
 const response = (data) => ({ ok: true, status: 200, json: async () => data });
 const payload = (name, suppliers = []) => ({ ok: true, traffic: { channelAlive: true }, suppliers, active: { supplierId: suppliers[0]?.id, name, model: "model", at: Date.now() } });
 const supplier = (entries, extra = {}) => ({ id: "opencode", name: "OpenCode", current: true, added: true, enabled: true, state: "ok", todayTokens: 0, entries, ...extra });
+
+// 包名与产物里注册的 id 必须逐字符一致：DSH 浏览器半身按包名请求 <pkg>/client，
+// 注册成别的名字时整条 entry 静默不激活，页面只报 loaded without registering。
+test("the bundle registers itself under the package name", async () => {
+  const host = client(async () => response(payload("A")));
+  assert.equal(host.registeredId, manifest.name);
+});
 
 for (const wide of [true, false]) test(`${wide ? "expanded" : "rail"} sidebar opens the single monitor panel`, async () => {
   const host = client(async () => response(payload("A")));
@@ -358,7 +366,7 @@ test("the card draws one bar per watched limit with its own countdown and no tod
     // 今日用量搬进详情弹窗的供应商栏
     await open(tree);
     await expand(tree, "opencode");
-    assert.match(textOf(rowOf(tree, "opencode").findByProps({ className: "qm-today-line" })), /今日用量 1\.24M tokens/);
+    assert.match(textOf(rowOf(tree, "opencode").findByProps({ className: "qm-today-line" })), /1\.24M tokens/);
   } finally { await act(async () => tree?.unmount()); }
 });
 
@@ -395,7 +403,7 @@ test("details show the colored ratio next to today's total, and only when compon
     await open(tree);
     await expand(tree, "opencode");
     const line = rowOf(tree, "opencode").findByProps({ className: "qm-today-line" });
-    assert.match(textOf(line), /今日用量 3\.15M tokens/, "总量仍按供应商口径");
+    assert.match(textOf(line), /3\.15M tokens/, "总量仍按供应商口径；区间由选择器表达");
     assert.match(textOf(line), /30\.0 : 1\.00 : 0\.150/, "比例挨着总量：命中 : 未命中 : 输出，未命中 = 1");
     // 三个数字分别着段色，与下方五段条的前三段一一对应
     const ratio = line.findByProps({ className: "qm-ratio" });
@@ -410,10 +418,80 @@ test("details show the colored ratio next to today's total, and only when compon
     await open(tree);
     await expand(tree, "opencode");
     const bare = rowOf(tree, "opencode").findByProps({ className: "qm-today-line" });
-    assert.match(textOf(bare), /今日用量 500 tokens/);
+    assert.match(textOf(bare), /500 tokens/);
     assert.equal(withClass(bare, "qm-split-bar").length, 0);
     assert.equal(withClass(rowOf(tree, "opencode"), "qm-split-bar").length, 0);
     assert.equal(bare.findAllByProps({ className: "qm-ratio" }).length, 0);
+  } finally { await act(async () => tree?.unmount()); }
+});
+
+test("the today line switches range and derives each window's token estimate", async () => {
+  const usageDays = [
+    { day: "2026-10-26", inputTokens: 10, outputTokens: 1, cacheReadTokens: 100, cacheWriteTokens: 0, unsplitTokens: 0, total: 111 },
+    { day: "2026-10-27", inputTokens: 100, outputTokens: 16, cacheReadTokens: 3_000, cacheWriteTokens: 40, unsplitTokens: 0, total: 3_155_000 },
+  ];
+  const hour = 3600_000;
+  const at = Date.now();
+  const estimate = (tokens, dPct, hours) => ({ from: at - hours * hour, to: at - hour, tokens, dPct });
+  const entries = [
+    // 每 1pp = 34M ÷ 20 = 1.7M：剩余 64pp ⇒ ≈109M，满 100pp ⇒ ≈170M
+    { name: "5h 滚动", key: "window.5h", short: "5h", kind: "win", pct: 36, estimate: estimate(34_000_000, 20, 5) },
+    { name: "周用量", key: "window.weekly", short: "周", kind: "win", pct: 53, estimate: estimate(2_500_000_000, 30, 72) },
+    { name: "月用量", key: "window.monthly", short: "月", kind: "win", pct: 89, estimate: estimate(3_150_000_000, 30, 96) },
+    // 只走了 1pp：整数百分比的舍入误差撑不起斜率，宁可给「—」
+    { name: "新窗口", key: "window.tiny", short: "新", kind: "win", pct: 2, estimate: estimate(9_000_000, 1, 3) },
+  ];
+  const state = payload("OpenCode", [supplier(entries, {
+    todayTokens: 382_000_000,
+    todayUsage: { inputTokens: 100, outputTokens: 16, cacheReadTokens: 3_000, cacheWriteTokens: 40, unsplitTokens: 0 },
+    usageDays,
+  })]);
+  const host = client(async () => response(state));
+  let tree;
+  try {
+    tree = await mount(host);
+    await open(tree);
+    await expand(tree, "opencode");
+    const today = rowOf(tree, "opencode").findByProps({ className: "qm-today-line" });
+
+    // 「Today」两个字换成了选择器，右边的文字不再重复区间名
+    const range = today.findByType("select");
+    assert.deepEqual(range.findAllByType("option").map((node) => node.props.value), ["today", "7d"]);
+    assert.equal(range.props.value, "today");
+    assert.equal(textOf(today.findByProps({ className: "qm-today-text" })), "382M tokens");
+
+    // 估算按斜率折算：34M ÷ Δ20pp = 1.7M/pp，剩余 64pp ⇒ ≈109M
+    const chips = withClass(today, "qm-est-q");
+    assert.deepEqual(chips.map(textOf), ["5h ≈109M", "周 ≈3.92B", "月 ≈1.16B", "新 —"]);
+    assert.match(chips[0].props.title, /4h: 34\.0M ÷ Δ20pp/, "title 里给出取样区间与分子分母");
+    assert.match(chips[0].props.title, /Δ20pp ±1pp → 104M–115M/);
+    assert.equal(chips[3].props.title, "本地样本不足");
+
+    // 切到套餐总量：同一份斜率，按满 100pp 折算
+    const [left, total] = today.findAllByProps({ className: "qm-est-seg" })[0].findAllByType("button");
+    assert.equal(left.props["aria-pressed"], true);
+    await act(async () => total.props.onClick());
+    const totals = withClass(today, "qm-est-q").map(textOf);
+    assert.deepEqual(totals, ["5h ≈170M", "周 ≈8.33B", "月 ≈10.5B", "新 —"]);
+
+    // 切到近 7 天：数量、比例、五分量条一起换，估算仍按窗口（不随区间变）
+    await act(async () => range.props.onChange({ target: { value: "7d" } }));
+    const line7d = rowOf(tree, "opencode").findByProps({ className: "qm-today-line" });
+    assert.equal(textOf(line7d.findByProps({ className: "qm-today-text" })), "3.16M tokens");
+    assert.match(textOf(line7d.findByProps({ className: "qm-ratio" })), /28\.2 : 1\.00 : 0\.155/);
+    assert.deepEqual(withClass(line7d, "qm-est-q").map(textOf), totals);
+
+    // 没有本地用量 → 不给估算（不编 0，也不编比例）
+    const bare = client(async () => response(payload("OpenCode", [supplier(
+      [{ name: "周用量", key: "window.weekly", short: "周", kind: "win", pct: 40 }],
+      { todayTokens: 500 })])));
+    let bareTree;
+    try {
+      bareTree = await mount(bare);
+      await open(bareTree);
+      await expand(bareTree, "opencode");
+      assert.equal(rowOf(bareTree, "opencode").findAllByProps({ className: "qm-est" }).length, 0);
+    } finally { await act(async () => bareTree?.unmount()); }
   } finally { await act(async () => tree?.unmount()); }
 });
 

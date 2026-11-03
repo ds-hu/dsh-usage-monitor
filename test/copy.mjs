@@ -42,6 +42,8 @@ test("removed surfaces and long explanatory paragraphs stay out of the dictionar
 });
 
 test("locale stays within the copy budget", () => {
-  assert.ok(zh.size <= 160, `中文词典 ${zh.size} 键，超出预算`);
-  assert.ok(en.size <= 160, `英文词典 ${en.size} 键，超出预算`);
+  // 160 → 163：今日行的区间选择器（rangeLabel、range7d）、估算口径切换（estLeft、estTotal）
+  // 与「样本不足」的悬停说明（estNoData）共五条；七天的句子、算式与区间都由数字拼出来，没有另开键。
+  assert.ok(zh.size <= 163, `中文词典 ${zh.size} 键，超出预算`);
+  assert.ok(en.size <= 163, `英文词典 ${en.size} 键，超出预算`);
 });
