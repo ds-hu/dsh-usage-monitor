@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/@ds-hu/dsh-token-quota)](https://www.npmjs.com/package/@ds-hu/dsh-token-quota)
 [![verify](https://github.com/ds-hu/dsh-usage-monitor/actions/workflows/verify.yml/badge.svg)](https://github.com/ds-hu/dsh-usage-monitor/actions/workflows/verify.yml)
-[![license](https://img.shields.io/badge/license-MIT-blue)](#许可证)
+[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![DSH](https://img.shields.io/badge/DSH-%E2%89%A5%200.1.7--rc.2-4c6ef5)](#安装)
 
 DeepSeek Harness 用量监控插件：查看当前会话对应供应商的周期限额、账户余额、报告费用与今日 Token 用量，
@@ -253,4 +253,4 @@ npm run test:lifecycle -- --app 'C:/path/DeepSeek Harness.exe' --output '.scratc
 
 ## 许可证
 
-MIT。
+MIT。完整文本见 [LICENSE](LICENSE)，其中一并保留了上游 shxtmaker 的版权声明。

@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/@ds-hu/dsh-token-quota)](https://www.npmjs.com/package/@ds-hu/dsh-token-quota)
 [![verify](https://github.com/ds-hu/dsh-usage-monitor/actions/workflows/verify.yml/badge.svg)](https://github.com/ds-hu/dsh-usage-monitor/actions/workflows/verify.yml)
-[![license](https://img.shields.io/badge/license-MIT-blue)](#license)
+[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![DSH](https://img.shields.io/badge/DSH-%E2%89%A5%200.1.7--rc.2-4c6ef5)](#install)
 
 A usage monitor for DeepSeek Harness: periodic limits, account balances, reported spend and today's token count for
@@ -354,4 +354,4 @@ package — use its Releases for the original.
 
 ## License
 
-MIT.
+MIT. The full text is in [LICENSE](LICENSE), which also keeps the copyright notice of the upstream project.
