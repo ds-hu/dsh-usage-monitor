@@ -32,7 +32,10 @@ for (const required of [pkg.main, pkg.exports["./client"], pkg.dsh.bundle.patch,
   "lib/quota-history.js",
   // 账本归属：用量落账与「仅计量」行的推导都在它里面，漏打包时宿主半身直接起不来
   "lib/ledger.js",
-  "README.md", "CHANGELOG.md"]) {
+  // 两份 README：中文是主文档，英文版靠 package.json 的 files 一起进产物，漏了就只有中文
+  "README.md", "README.en.md", "CHANGELOG.md",
+  // README 里引用的截图：不打包时 npm 页面上的图全裂
+  "docs/images/overview.png", "docs/images/providers.png"]) {
   assert.ok(paths.has(required.replace(/^\.\//, "")), `产物缺少 ${required}`);
 }
 // Plugins 面板的标题与图标同样要进产物并能经 ESM 解析器取到：
