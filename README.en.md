@@ -343,7 +343,7 @@ The output directory must not have been used before. Supplier parsing tests use 
 Web checks cover installation, the UI, configuration persistence and rescanning, and do not send chat messages or
 configure real supplier keys.
 
-[Windows desktop notes](docs/windows-desktop-adaptation.md) · [Single-panel refactor](docs/single-panel-refactor-execution.md) · [ADR-0002](docs/adr/0002-single-monitor-surface.md) · [v2.5.0 release record](docs/v2.5.0-release-execution.md)
+[Windows desktop notes](docs/windows-desktop-adaptation.md) · [Single-panel refactor](docs/single-panel-refactor-execution.md) · [ADR-0002](docs/adr/0002-single-monitor-surface.md) · [v2.5.0 release record](docs/v2.5.0-release-execution.md) · [v2.6.0 release record](docs/v2.6.0-release-execution.md)
 
 ## Credits
 

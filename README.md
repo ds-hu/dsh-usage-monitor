@@ -243,7 +243,7 @@ npm run test:lifecycle -- --app 'C:/path/DeepSeek Harness.exe' --output '.scratc
 
 输出目录需为未使用过的目录。供应商解析测试使用模拟响应；真实 Desktop 与 Web 验收检查安装、界面、配置持久化和重新扫描，不发送聊天消息或配置真实供应商密钥。
 
-[桌面兼容性说明](docs/windows-desktop-adaptation.md) · [单一面板重构记录](docs/single-panel-refactor-execution.md) · [ADR-0002](docs/adr/0002-single-monitor-surface.md) · [侧栏与设置实施记录](docs/sidebar-settings-iteration-plan.md) · [v2.5.0 发布记录](docs/v2.5.0-release-execution.md)
+[桌面兼容性说明](docs/windows-desktop-adaptation.md) · [单一面板重构记录](docs/single-panel-refactor-execution.md) · [ADR-0002](docs/adr/0002-single-monitor-surface.md) · [侧栏与设置实施记录](docs/sidebar-settings-iteration-plan.md) · [v2.5.0 发布记录](docs/v2.5.0-release-execution.md) · [v2.6.0 发布记录](docs/v2.6.0-release-execution.md)
 
 ## 来源与致谢
 
