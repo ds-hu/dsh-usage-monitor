@@ -30,6 +30,8 @@ for (const required of [pkg.main, pkg.exports["./client"], pkg.dsh.bundle.patch,
   "lib/season.js",
   // 额度历史：统计页的剩余额度折线依赖它，漏打包会让 /state?quota=1 直接 500
   "lib/quota-history.js",
+  // 账本归属：用量落账与「仅计量」行的推导都在它里面，漏打包时宿主半身直接起不来
+  "lib/ledger.js",
   "README.md", "CHANGELOG.md"]) {
   assert.ok(paths.has(required.replace(/^\.\//, "")), `产物缺少 ${required}`);
 }

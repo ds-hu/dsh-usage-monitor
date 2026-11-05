@@ -126,11 +126,14 @@ test("late state responses cannot overwrite a newer poll", async () => {
   } finally { await act(async () => tree?.unmount()); }
 });
 
-test("expanded sidebar shows the plan name and the weekly bar, and scopes today's total to current suppliers", async () => {
+test("expanded sidebar shows the plan name and the weekly bar, and counts every listed supplier's today", async () => {
   const state = payload("OpenCode", [
     supplier([{ name: "5 小时", kind: "win", pct: 5, reset: "约 2 小时后重置" }, { name: "周用量", kind: "win", pct: 2, reset: "下周重置" }], { todayTokens: 64_429_367 }),
     supplier([{ name: "CNY", kind: "bal", remain: "¥41.99" }], { id: "deepseek", name: "DeepSeek", todayTokens: 1_318_275 }),
+    // 有用量但不在「当前」集合里（例如已关闭、DSH 仍在调它）：token 是真的，就必须进总量
     supplier([], { id: "historic", name: "Historical", current: false, todayTokens: 100_000_000 }),
+    // 既没用量也不在列表里的行不该被算进去
+    supplier([], { id: "dropped", name: "Dropped", current: false, added: false, todayTokens: 999_000 }),
   ]);
   state.active.model = "deepseek-v4.1-flash-with-a-long-model-name";
   const host = client(async () => response(state));
@@ -153,8 +156,8 @@ test("expanded sidebar shows the plan name and the weekly bar, and scopes today'
     assert.equal(tree.root.findAllByProps({ className: "qm-l3" }).length, 0);
     const entry = tree.root.findByProps({ "data-qm-entry": "" });
     assert.ok(!textOf(entry).includes("tokens"), "卡片正文不再出现今日用量：" + textOf(entry));
-    assert.match(entry.props.title, /65\.7M tokens/, "今日用量仍进无障碍标签/悬停");
-    assert.match(entry.props["aria-label"], /当前供应商.*今日.*Token.*本地日/);
+    assert.match(entry.props.title, /166M tokens/, "今日总量 = 列表里各行之和（含不在「当前」集合里的行）");
+    assert.match(entry.props["aria-label"], /已添加供应商.*今日.*Token.*本地日/);
     assert.ok(entry.props.title.includes("OpenCode"));
     assert.ok(!entry.props.title.includes(state.active.model), "模型名不再进卡片：" + entry.props.title);
     assert.equal(tree.root.findAll((n) => /(^|\s)qm-dot(\s|$)/.test(n.props.className || "")).length, 0, "卡片不再有阈值圆点");
@@ -953,4 +956,91 @@ test("both locale dictionaries stay complete and agree on placeholders", () => {
     const placeholders = (text) => [...String(text).matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
     assert.deepEqual(placeholders(en[key]), placeholders(zh[key]), `占位符不一致：${key}`);
   }
+});
+
+// ---------- 仅计量供应商（任意供应商的 token 统计，没有剩余 %） ----------
+const meteredSupplier = (extra = {}) => ({
+  id: "local:siliconflow", name: "SiliconFlow", route: "siliconflow",
+  queryable: false, state: "metered", entries: [], current: true, added: true, enabled: true,
+  todayTokens: 1_830_000,
+  todayUsage: { inputTokens: 340_000, outputTokens: 123_000, cacheReadTokens: 1_020_000, cacheWriteTokens: 347_000, unsplitTokens: 0 },
+  usageDays: [
+    { day: "2026-11-03", inputTokens: 400_000, outputTokens: 140_000, cacheReadTokens: 1_400_000, cacheWriteTokens: 400_000, unsplitTokens: 0, total: 2_340_000 },
+    { day: "2026-11-04", inputTokens: 340_000, outputTokens: 123_000, cacheReadTokens: 1_020_000, cacheWriteTokens: 347_000, unsplitTokens: 0, total: 1_830_000 },
+  ],
+  ...extra,
+});
+const meteredState = () => {
+  const metered = meteredSupplier();
+  return { ...payload("SiliconFlow", [metered]), active: { supplierId: metered.id, name: metered.name, model: "Qwen3", at: Date.now(), fresh: true } };
+};
+
+test("a metered supplier has no quota surface: no bar, no metric table, no data time", async () => {
+  const host = client(async () => response(meteredState()));
+  let tree;
+  try {
+    tree = await mount(host);
+    // 卡片：名字 + 今日 chip 都在，第 2 行是无条回退，填的是「近 7 天」而不是「—」
+    assert.equal(line(tree, "qm-plan"), "SiliconFlow");
+    assert.equal(textOf(tree.root.findByProps({ className: "qm-today-chip" })), "今日 1.83M");
+    assert.equal(barNode(tree), null, "没有百分比就没有进度条");
+    assert.match(line(tree, "qm-l2"), /^近 7 天 /, "没有条时第 2 行给这个窗口自己的量");
+
+    await open(tree);
+    await expand(tree, "local:siliconflow");
+    const row = rowOf(tree, "local:siliconflow");
+    assert.equal(textOf(row.findAll((node) => /^qm-pill/.test(node.props?.className || ""))[0]), "仅计量");
+    assert.match(textOf(row.findByProps({ className: "qm-row-metric" })), /^近 7 天 /);
+    assert.equal(row.findAllByProps({ className: "qm-metric-table" }).length, 0, "不画指标表");
+    assert.ok(!textOf(row).includes("尚未查询"), "空指标表不得被读成一次失败的查询");
+    assert.equal(row.findAllByProps({ className: "qm-data-time" }).length, 0, "从不查询，所以没有数据时间");
+    assert.equal(row.findAllByProps({ className: "qm-est" }).length, 0, "没有百分比就没有窗口估算");
+    assert.equal(textOf(row.findByProps({ className: "qm-today-text" })), "1.83M tokens");
+    assert.match(textOf(row.findByProps({ className: "qm-ratio" })), /3\.00 : 1\.00 : 0\.362/);
+    assert.ok(withClass(row, "qm-split-bar").length > 0, "五分量照常画");
+    assert.equal(textOf(row.findByProps({ className: "qm-row-actions" }).findByType("button")), "改名");
+  } finally { await act(async () => tree?.unmount()); }
+});
+
+test("the window label follows the retention period instead of always saying 7 days", async () => {
+  // 求和窗口是 min(7, retentionDays)。写死「近 7 天」会在保留期更短时谎报口径。
+  const state = meteredState();
+  state.poll = { usageHistoryDays: 3 };
+  const host = client(async () => response(state));
+  let tree;
+  try {
+    tree = await mount(host);
+    assert.match(line(tree, "qm-l2"), /^近 3 天 /, "卡片按真实窗口写天数");
+    await open(tree);
+    await expand(tree, "local:siliconflow");
+    const row = rowOf(tree, "local:siliconflow");
+    assert.match(textOf(row.findByProps({ className: "qm-row-metric" })), /^近 3 天 /);
+    const options = withClass(row, "qm-range")[0].findAllByType("option").map(textOf);
+    assert.deepEqual(options, ["今日", "近 3 天"], "区间选项与实际求和天数一致");
+  } finally { await act(async () => tree?.unmount()); }
+});
+
+test("renaming a metered supplier writes only meteredNames, never a supplier config", async () => {
+  const posts = [];
+  const state = meteredState();
+  const host = client(async (url, opts) => {
+    if (opts?.method !== "POST") return response(state);
+    posts.push(JSON.parse(opts.body));
+    return response({ ok: true });
+  });
+  let tree;
+  try {
+    tree = await mount(host, {}, host.Page);
+    await act(async () => tab(tree, "供应商").props.onClick());
+    // 仅计量行没有启用开关：行不是一个可以关掉的采集器
+    assert.equal(tree.root.findAll((node) => node.props?.className === "qm-page-toggle").length, 0);
+    await act(async () => button(tree, "改名").props.onClick());
+    const input = tree.root.findByType("input");
+    assert.equal(input.props.value, "SiliconFlow");
+    assert.match(textOf(tree.root.findByProps({ className: "qm-empty-line" })), /siliconflow/, "子页点名它挂在哪条路由上");
+    await act(async () => input.props.onChange({ target: { value: "硅基流动" } }));
+    await act(async () => button(tree, "保存").props.onClick());
+    assert.deepEqual(posts[0], { meteredNames: { siliconflow: "硅基流动" } });
+    assert.ok(!Object.hasOwn(posts[0], "suppliers"), "改名不得写进供应商配置");
+  } finally { await act(async () => tree?.unmount()); }
 });

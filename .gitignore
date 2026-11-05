@@ -5,6 +5,8 @@ playwright-report/
 test-results/
 # MCP 浏览器工具把快照/日志落在工作区根目录，属于本地产物
 .playwright-mcp/
+# clarity_test 的验收截图与轮次记录，属于本地产物
+.clarity/
 .scratch/
 .research-raw/
 *.log

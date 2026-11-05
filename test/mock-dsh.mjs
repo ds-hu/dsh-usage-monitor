@@ -232,7 +232,18 @@ for (const id of ["deepseek", "opencode", "commandcode", "openrouter", "moonshot
   assert.equal(sX.payload.suppliers.find((s) => s.id === id).current, true, id + " 应兜底按启用清单显示");
 }
 console.log("✓ 流量兜底：无近期可用流量时小组件按启用清单显示（trafficStale=true）");
-assert.equal(sX.payload.active, null, "未映射路由（unknown-route-xyz）不产生 active");
+// 未映射路由不再被丢掉：它有自己的账本行（local:<route>），token 记在自己名下，
+// 也不进「已启用清单」的流量兜底集合——它不是一个可配置的注册表供应商。
+const meteredX = sX.payload.suppliers.find((s) => s.id === "local:unknown-route-xyz");
+assert.ok(meteredX, "未映射路由应产生一条仅计量行");
+assert.equal(meteredX.queryable, false, "仅计量行标记为不可查询");
+assert.equal(meteredX.state, "metered", "仅计量行有自己的状态，不冒充「尚未查询」");
+assert.deepEqual(meteredX.entries, [], "仅计量行没有任何可查询指标");
+assert.equal(meteredX.todayTokens, 2, "它的 token 记在自己名下");
+assert.equal(meteredX.name, "unknown-route-xyz", "默认名取路由 id（可改名）");
+assert.equal(sX.payload.suppliers.find((s) => s.id === "deepseek").todayTokens ?? 0, 0, "未映射路由的 token 不得记到注册表供应商名下");
+assert.equal(sX.payload.active?.supplierId, "local:unknown-route-xyz", "最近一次调用是未映射路由 → active 指向它的仅计量行");
+console.log("✓ 未映射路由 → 仅计量行：独立记账、不进注册表供应商、可作为当前在用");
 emit({ type: "assistant/message", data: { source: { provider: "deepseek-official", model: "deepseek-v3" }, usage: { uncachedInputTokens: 1000, outputTokens: 500 } } });
 const s2 = await call("/api/dsh-token-quota/state");
 assert.equal(s2.payload.suppliers.find((s) => s.id === "deepseek").todayTokens, 1500);

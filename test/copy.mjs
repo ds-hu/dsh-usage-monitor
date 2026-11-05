@@ -44,6 +44,10 @@ test("removed surfaces and long explanatory paragraphs stay out of the dictionar
 test("locale stays within the copy budget", () => {
   // 160 → 163：今日行的区间选择器（rangeLabel、range7d）、估算口径切换（estLeft、estTotal）
   // 与「样本不足」的悬停说明（estNoData）共五条；七天的句子、算式与区间都由数字拼出来，没有另开键。
-  assert.ok(zh.size <= 163, `中文词典 ${zh.size} 键，超出预算`);
-  assert.ok(en.size <= 163, `英文词典 ${en.size} 键，超出预算`);
+  // 163 → 168：仅计量供应商是一个新的行类型，五条全是数据标签而非说明文字——
+  // 行状态（meteredOnly）、窗口量（windowTokens）、行按钮（rename）、
+  // 改名子页的两个字段名（meteredName、meteredRoute）。
+  // 168 → 167：窗口天数由保留期决定，区间选项改用既有的 statsWindow，删掉写死的 range7d。
+  assert.ok(zh.size <= 167, `中文词典 ${zh.size} 键，超出预算`);
+  assert.ok(en.size <= 167, `英文词典 ${en.size} 键，超出预算`);
 });
