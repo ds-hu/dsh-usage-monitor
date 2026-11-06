@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>面板会话：把草稿与写入锁从 React 里搬出来</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1b2330;
+    --muted: #5b6675;
+    --line: #dfe4ec;
+    --panel: #f4f6fa;
+    --code-fg: #1b2330;
+    --accent: #2563eb;
+    --accent-soft: #dbeafe;
+    --warn: #b45309;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #11151b;
+      --fg: #e7ebf2;
+      --muted: #98a3b3;
+      --line: #2a3444;
+      --panel: #1a212b;
+      --code-fg: #e7ebf2;
+      --accent: #6ea8fe;
+      --accent-soft: #1e3a5f;
+      --warn: #fbbf24;
+    }
+  }
+  html { background: var(--bg); }
+  body {
+    margin: 0 auto; max-width: 46rem; padding: 20px 16px 64px;
+    background: var(--bg); color: var(--fg);
+    font: 15px/1.65 -apple-system, "Segoe UI", "Noto Sans SC", sans-serif;
+  }
+  h1 { font-size: 1.35rem; line-height: 1.3; margin: 0 0 .4rem; color: var(--fg); }
+  h2 { font-size: 1.05rem; margin: 2rem 0 .5rem; padding-bottom: .3rem; border-bottom: 1px solid var(--line); color: var(--fg); }
+  h3 { font-size: .95rem; margin: 1.2rem 0 .3rem; color: var(--fg); }
+  p, li { margin: .45rem 0; color: var(--fg); }
+  b, strong { color: var(--fg); }
+  .lede { color: var(--muted); margin-bottom: 1.4rem; }
+  a { color: var(--accent); }
+  table { border-collapse: collapse; width: 100%; font-size: .86rem; margin: .6rem 0; display: block; overflow-x: auto; }
+  th, td { text-align: left; padding: .38rem .5rem; border-bottom: 1px solid var(--line); vertical-align: top; color: var(--fg); }
+  th { font-weight: 600; color: var(--muted); white-space: nowrap; }
+  code, pre { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
+  code { font-size: .88em; background: var(--panel); color: var(--code-fg); padding: .08em .3em; border-radius: 4px; }
+  pre { background: var(--panel); color: var(--code-fg); border: 1px solid var(--line); padding: .7rem .8rem; border-radius: 8px; overflow-x: auto; font-size: .8rem; line-height: 1.55; }
+  pre code { background: none; padding: 0; color: inherit; }
+  .card { border: 1px solid var(--line); border-radius: 10px; padding: .8rem 1rem; background: var(--bg); }
+  .tag { display: inline-block; font-size: .72rem; padding: .05rem .4rem; border-radius: 6px; background: var(--accent-soft); color: var(--accent); margin-left: .35rem; vertical-align: 1px; }
+  .warn { color: var(--warn); }
+  ul { padding-left: 1.2rem; }
+  .num { font-variant-numeric: tabular-nums; }
+  footer { margin-top: 2.4rem; font-size: .8rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: .8rem; }
+</style>
+</head>
+<body>
+
+<h1>面板会话：把草稿与写入锁从 React 里搬出来</h1>
+<p class="lede">候选 2 的核心伪代码。评审这份数据流、不变量与失败模式；定了我再改代码。</p>
+
+<h2>1. 现在的摩擦（可量）</h2>
+<ul>
+  <li><code>usePanelController</code> 一个函数：<span class="num">289</span> 行、<span class="num">12</span> 个 <code>useState</code>、<span class="num">6</span> 个 <code>useRef</code>、<span class="num">6</span> 个 effect，返回 <span class="num">25</span> 个成员，其中 <code>savedBanner</code> 是 JSX、<code>advancedRef</code> 是 DOM 引用。</li>
+  <li><span class="num">7</span> 个异步守卫手工对账：<code>editorId</code>、<code>opSeq</code>、<code>mountedRef</code>、<code>testSeq</code>、<code>revision</code>、<code>togglingRef</code>、<code>settingsWrites</code>。</li>
+  <li>「保存进行中」有两个家：控制器里的 <code>toggling</code>，与模块级的 <code>settingsWrites</code>——视图在渲染时直接读后者来决定禁用态（<code>orderedRows</code>）。</li>
+  <li>后果：这类「迟到回调不得污染新草稿」的规则只能靠渲染整个面板来验证；<code>test/browser/edit-identity.spec.mjs</code> 有 <span class="num">13</span> 个用例专门守它，全部要起浏览器。</li>
+</ul>
+
+<h2>2. 方案 A（推荐）：一个面板会话模块</h2>
+<p>把草稿生命周期、写入身份与「回调是否还算当前」收进一个模块；React 只剩订阅与视图态。它是一个<b>模块级的单例</b>，不是每次渲染新建——因为写入必须在面板关掉后继续成立。</p>
+
+<h3>接口（调用方只需要知道这些）</h3>
+<pre><code>createPanelSession({ post, reload, surface }) →
+{
+  subscribe(fn) / getSnapshot()        // 一个不可变快照，视图只读它
+  begin(supplierId | null)             // 打开编辑：给 id 进供应商草稿，给 null 进全局设置
+  setField(key, value)                 // 改当前草稿的一个字段（同时推进 revision）
+  test(supplierId)                     // 连接测试：草稿优先，否则用已保存配置
+  save()                               // 保存当前草稿（编辑器或全局）
+  discard()                            // 明确放弃当前草稿
+  toggle(supplierId)                   // 启停
+  leave()                              // 回到目录（脏草稿先请求确认，见下）
+}</code></pre>
+
+<h3>快照</h3>
+<pre><code>{
+  editor: { supplierId, editorId, origin, form, initial, revision } | null,
+  globalForm, dirty, globalDirty,
+  opBusy,                      // 当前草稿有写在飞（禁用整张表单）
+  lockedIds: string[],         // 有写在飞的供应商（视图据此禁用，不再读 settingsWrites）
+  togglingIds: string[],
+  test: { supplierId, revision, result } | null,
+  saved: "global" | supplierId | null,
+  failure: { message, fields: ("threshold" | "secret" | "transport")[] } | null
+}</code></pre>
+
+<h3>写一次的全部路径</h3>
+<pre><code>save():
+  op = identity()                    // { editorId, seq: ++opSeq }
+  if (opBusy || pendingWriteFor(current)) return        // 合并重复点击
+  publish({ opBusy: true, saved: null, failure: null })
+  outcome = await post("/settings", patchOf(current))   // 网络，可能很慢
+  await reload()                                        // 取服务端真值
+  finally { release(current) }                          // 释放锁、唤醒等待者
+
+  // 只有身份仍然匹配时，才允许写任何 UI 字段：
+  if (!current(op)) return                              // 静默丢弃，不碰 saved/failure/草稿
+  publish({ saved: id, failure: null })
+  if (savedSupplier) { surface.showTab(origin); editor = null; editorId++ }</code></pre>
+
+<p>「当前」的判定只在这里写一次：</p>
+<pre><code>current({ editorId, seq }) =
+  mounted &amp;&amp; opSeq === seq &amp;&amp; this.editorId === editorId &amp;&amp; surface.host is open</code></pre>
+
+<h3>不变量（实现必须保证）</h3>
+<table>
+  <tr><th>#</th><th>不变量</th><th>守的是哪个既有用例</th></tr>
+  <tr><td>1</td><td>身份不匹配的回调<b>不写任何 UI 字段</b>，也不清草稿</td><td>保存中切换编辑器：旧回调不清除新草稿</td></tr>
+  <tr><td>2</td><td>保存失败保留草稿，只写 <code>failure</code></td><td>保存失败保留草稿；重开以服务端为准</td></tr>
+  <tr><td>3</td><td>改任意字段使连接测试结果作废（<code>revision</code> 前进），迟到结果按 <code>(supplierId, revision)</code> 丢弃</td><td>编辑后旧测试返回不显示为当前草稿结果</td></tr>
+  <tr><td>4</td><td>锁按供应商粒度：<code>lockedIds</code> 是唯一事实源，视图不得另算</td><td>启停并发、保存与启停互斥</td></tr>
+  <tr><td>5</td><td>草稿只在 <code>discard()</code>、保存成功或面板销毁时清理</td><td>页签切换与背景重载保留草稿</td></tr>
+  <tr><td>6</td><td>面板关闭不取消已在飞的写入；重开时通过 <code>lockedIds</code> 等候</td><td>关闭在途保存后重开等候服务端状态</td></tr>
+  <tr><td>7</td><td>全局与供应商的写互不提前解锁：<code>opBusy</code> 只由自己的 <code>seq</code> 结算</td><td>全局迟到回调不得解锁供应商保存</td></tr>
+  <tr><td>8</td><td>原生设置页与对话框共用同一实例，因此保存锁与草稿身份天然继承</td><td>原生页接管保留保存锁与草稿身份</td></tr>
+</table>
+
+<h3>失败模式</h3>
+<table>
+  <tr><th>情形</th><th>行为</th></tr>
+  <tr><td>校验不通过（阈值区间）</td><td><code>failure.fields = ["threshold"]</code>，视图据此展开「高级」并把焦点移到阈值输入框——不再由控制器持有 DOM 引用</td></tr>
+  <tr><td>保存请求超时</td><td>按 <code>transport</code> 处理，草稿保留；<b>不重放</b>（服务端可能已成功）</td></tr>
+  <tr><td>保存期间供应商被移除</td><td><code>begin()</code> 找不到条目即回到目录，<code>failure = null</code></td></tr>
+  <tr><td>面板在 <code>post</code> 期间卸载</td><td><code>mounted = false</code>，回调丢弃；写入仍在 <code>lockedIds</code> 里，靠快照可见</td></tr>
+</table>
+
+<h3>迁移后各处的体积</h3>
+<table>
+  <tr><th>位置</th><th>现在</th><th>之后</th></tr>
+  <tr><td><code>usePanelController</code></td><td>289 行 + 25 个返回成员</td><td>约 60 行的绑定层（订阅 + 视图态：advanced、confirmation）</td></tr>
+  <tr><td><code>settingsWrites</code> 直读</td><td>控制器 6 处 + 视图 1 处</td><td>0（只剩快照里的 <code>lockedIds</code>）</td></tr>
+  <tr><td><code>savedBanner</code> JSX</td><td>在控制器里</td><td>回到视图</td></tr>
+  <tr><td>身份判定</td><td>7 个 ref 分散对账</td><td>1 个 <code>current(op)</code></td></tr>
+</table>
+
+<h2>3. 方案 B：拆成「草稿会话」+「写入队列」</h2>
+<p>草稿随面板销毁，写入队列独立存在（沿用现在 <code>settingsWrites</code> 的位置）。好处是写入队列将来能被面板以外的入口复用；代价是两者之间要传一个共享的写入身份，<b>不变量 1、7、8 会跨模块表达</b>——规则没有集中，只是变体更小。</p>
+<p class="warn">我的判断：这一轮的病根是「身份规则散在 7 个 ref 里」，B 把 7 个变成 5 个但要跨两个模块，局部性收益低于 A。除非将来确实有面板之外的写入者，否则不值得。</p>
+
+<h2>4. 测试怎么跟着动</h2>
+<ul>
+  <li><b>新增 store 级用例</b>（无 React）：A 保存中切到 B 的迟到回调、测试结果按 revision 失效、启停并发、关闭后重开的等待——现有 13 个浏览器用例里约 8 个的规则可以下沉到这一层。</li>
+  <li><b>Playwright 保留</b>：原生设置页接管、焦点回退、Esc 与遮罩、滚动位置——这些是真 DOM 行为，不能下沉。</li>
+  <li><b>不采取</b>「先写新的再删旧的」：两套状态同时存在会立刻产生第二个事实源，正是这次要消掉的东西。按行为分组切换，每组切换后跑全量。</li>
+</ul>
+
+<h2>5. 回退与边界</h2>
+<ul>
+  <li>不改 wire、不改 CSS、不改可见文案：这是纯前端结构改动，回退就是还原 <code>lib/client.js</code> 一个文件。</li>
+  <li>不做的事：不引入状态库、不改 <code>surface</code> 状态机（它已经是对的）、不把草稿持久化到 localStorage。</li>
+  <li>完成判据：<code>settingsWrites</code> 在视图层零引用；<code>usePanelController</code> 不再返回 JSX 或 DOM 引用；单测 + 浏览器用例全绿。</li>
+</ul>
+
+<footer>文件位置：docs/design/panel-session.html（不进 npm 产物）。这是设计稿，仓库代码尚未改动。</footer>
+
+</body>
+</html>
