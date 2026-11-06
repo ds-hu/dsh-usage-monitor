@@ -307,7 +307,7 @@ test("names are rendered by the client dictionary, and an unknown key never leak
     tree = await mount(host, { t: tEn });
     assert.equal(textOf(tree.root.findByProps({ className: "qm-plan" })), "Moonshot (China)");
     await open(tree);
-    assert.equal(textOf(tree.root.findByProps({ className: "qm-row-name" })), "Moonshot (China)");
+    assert.equal(textOf(tree.root.findByProps({ className: "qm-line-name" })), "Moonshot (China)");
     await expand(tree, "moonshot-cn");
     const table = textOf(tree.root.findByProps({ className: "qm-metric-tables" }));
     assert.ok(table.includes("Weekly usage"), "条目名来自词典：" + table);
@@ -1066,7 +1066,7 @@ test("a metered supplier has no quota surface: no bar, no metric table, no data 
     await expand(tree, "local:siliconflow");
     const row = rowOf(tree, "local:siliconflow");
     assert.equal(textOf(row.findAll((node) => /^qm-pill/.test(node.props?.className || ""))[0]), "仅计量");
-    assert.match(textOf(row.findByProps({ className: "qm-row-metric" })), /^近 7 天 /);
+    assert.match(textOf(row.findByProps({ className: "qm-line-metric" })), /^近 7 天 /);
     assert.equal(row.findAllByProps({ className: "qm-metric-table" }).length, 0, "不画指标表");
     assert.ok(!textOf(row).includes("尚未查询"), "空指标表不得被读成一次失败的查询");
     assert.equal(row.findAllByProps({ className: "qm-data-time" }).length, 0, "从不查询，所以没有数据时间");
@@ -1090,7 +1090,7 @@ test("the window label follows the retention period instead of always saying 7 d
     await open(tree);
     await expand(tree, "local:siliconflow");
     const row = rowOf(tree, "local:siliconflow");
-    assert.match(textOf(row.findByProps({ className: "qm-row-metric" })), /^近 3 天 /);
+    assert.match(textOf(row.findByProps({ className: "qm-line-metric" })), /^近 3 天 /);
     const options = withClass(row, "qm-range")[0].findAllByType("option").map(textOf);
     assert.deepEqual(options, ["今日", "近 3 天"], "区间选项与实际求和天数一致");
   } finally { await act(async () => tree?.unmount()); }

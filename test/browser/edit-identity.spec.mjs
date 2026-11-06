@@ -17,7 +17,7 @@ async function openSettings(page) {
 async function openSupplier(page, dialog, name) {
   await dialog.getByRole("tab", { name: "供应商", exact: true }).click();
   // 精确匹配行内的供应商名容器，避免 hasText 命中「可添加」折叠区或按钮的可访问名
-  const row = dialog.locator(".qm-page-row").filter({ has: page.locator("span.qm-page-name", { hasText: name }) });
+  const row = dialog.locator(".qm-page-row").filter({ has: page.locator("span.qm-line-name", { hasText: name }) });
   await row.first().getByRole("button", { name: "配置", exact: true }).click();
   await expect(dialog.locator(".qm-page-head")).toContainText(name);
 }
