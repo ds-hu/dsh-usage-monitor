@@ -48,6 +48,12 @@ test("locale stays within the copy budget", () => {
   // 行状态（meteredOnly）、窗口量（windowTokens）、行按钮（rename）、
   // 改名子页的两个字段名（meteredName、meteredRoute）。
   // 168 → 167：窗口天数由保留期决定，区间选项改用既有的 statsWindow，删掉写死的 range7d。
-  assert.ok(zh.size <= 167, `中文词典 ${zh.size} 键，超出预算`);
-  assert.ok(en.size <= 167, `英文词典 ${en.size} 键，超出预算`);
+  // 167 → 198：供应商与限额项的名字改为「词典键 + 参数」——名字原先由查询层写死中文，
+  // 英文界面里一直漏中文。新增 31 个键全是名词与口径标签（余额/模型/周窗口/组织费用…），
+  // 没有一条是说明文字：101 条预算里没有出现一句解释段。说明仍然只走 InfoHint 通道。
+  // 198 → 215：报告口径（UTC 今日/昨日）、分解列头（输入/请求数/到账…）与折叠说明的原子。
+  // 说明这一类全部走 InfoHint，默认视图一条都不显示；预算守的是「默认视图的字数」，
+  // 因此上限放宽，但每一条新增仍然是名词或标签，没有出现解释段落。
+  assert.ok(zh.size <= 216, `中文词典 ${zh.size} 键，超出预算`);
+  assert.ok(en.size <= 216, `英文词典 ${en.size} 键，超出预算`);
 });

@@ -5,6 +5,7 @@
 // OpenAI/Anthropic 组织 AdminKey 用量与费用、OpenCode/Command Code 兼容来源。
 // 用法：node test/smoke.mjs
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { PROVIDERS, resetAtMs } from "../lib/providers.js";
 
 let fetchCount = 0;
@@ -101,8 +102,70 @@ const cfg = (over = {}) => ({ apiKey: "sk-test", warnPct: 80, critPct: 95, ...ov
 
 installFetch();
 
+// 条目名与供应商名的「词典键 + 参数」必须与宿主发的旧文案逐字一致（双写期契约）：
+// 这里按客户端字典独立实现一次替换来核对，两边各写一份实现正是要证明的事。
+const clientSource = readFileSync(new URL("../lib/client.js", import.meta.url), "utf8");
+const dictionaryOf = (lang, end) => {
+  const from = clientSource.indexOf(`        ${lang}: {`, clientSource.indexOf("const LOCALES = {"));
+  const to = end === "en" ? clientSource.indexOf("\n      };", from) : clientSource.indexOf("\n        en: {", from);
+  return new Map([...clientSource.slice(from, to).matchAll(/^\s{10}(\w+):\s*"((?:[^"\\]|\\.)*)"/gm)].map((m) => [m[1], m[2]]));
+};
+const zhAtoms = dictionaryOf("zh");
+const enAtoms = dictionaryOf("en", "en");
+const composedZh = (spec) => {
+  const template = spec?.atom ? zhAtoms.get(spec.atom) : undefined;
+  if (!template) return null;
+  let missing = false;
+  const text = template.replace(/\{(\w+)\}/g, (whole, name) => {
+    const value = spec.args?.[name];
+    const resolved = value && typeof value === "object" ? composedZh(value) : value;
+    if (resolved === undefined || resolved === null) { missing = true; return whole; }
+    return String(resolved);
+  });
+  return missing ? null : text;
+};
+/** 每个带 nameSpec 的条目名，都必须等于客户端字典此刻会渲染出的文案。 */
+const checkNames = (result, where = "") => {
+  for (const entry of result?.entries || []) {
+    if (!entry.nameSpec) continue;
+    const composed = composedZh(entry.nameSpec);
+    assert.ok(composed, `${where} 缺少词典键：${entry.nameSpec.atom}`);
+    assert.equal(entry.name, composed, `${where} 词典文案与旧文案不一致：${entry.nameSpec.atom}`);
+  }
+};
+const run = async (id, config = cfg()) => {
+  const result = await PROVIDERS[id].query(config);
+  checkNames(result, id);
+  return result;
+};
+for (const [id, meta] of Object.entries(PROVIDERS)) {
+  if (!meta.nameSpec) continue;
+  assert.equal(meta.name, composedZh(meta.nameSpec), `供应商名与词典不一致：${id}`);
+}
+
+// 静态扫描：查询层发出的每个词典键都必须在两本词典里存在。没有夹具覆盖的供应商
+// （例如只在真实账号下才出现的窗口）也不会带着一个坏键上线。
+const hostSource = readFileSync(new URL("../lib/providers.js", import.meta.url), "utf8");
+const atomsFromHost = new Set([
+  ...[...hostSource.matchAll(/nameKey\("(\w+)"/g)].map((m) => m[1]),
+  ...[...hostSource.matchAll(/atom: "(\w+)"/g)].map((m) => m[1]),
+]);
+// 说明与分解的原子写在两张表里（NOTES / PARTS），不是 nameKey 的字面量实参：
+// 只扫 nameKey 会漏掉它们，于是「宿主的词表都在词典里」这条保证就只剩夹具兜底。
+for (const table of ["NOTES", "PARTS"]) {
+  const from = hostSource.indexOf(`const ${table} = {`);
+  assert.ok(from > 0, `找不到 ${table} 原子表`);
+  const block = hostSource.slice(from, hostSource.indexOf("\n};", from));
+  for (const m of block.matchAll(/:\s*"(\w+)"/g)) atomsFromHost.add(m[1]);
+}
+assert.ok(atomsFromHost.size > 40, `扫描到的词典键太少（${atomsFromHost.size}），匹配失效了`);
+for (const atom of atomsFromHost) {
+  assert.ok(zhAtoms.has(atom), `宿主发出的词典键不在中文词典里：${atom}`);
+  assert.ok(enAtoms.has(atom), `宿主发出的词典键不在英文词典里：${atom}`);
+}
+
 // DeepSeek：多币种余额
-const ds = await PROVIDERS.deepseek.query(cfg());
+const ds = await run("deepseek", cfg());
 assert.equal(ds.state, "ok");
 assert.equal(ds.entries.length, 2, "多币种保留全部币种");
 assert.equal(ds.headline.amt, "¥100.00 · $12.50");
@@ -110,7 +173,7 @@ assert.match(ds.entries[0].note, /到账/);
 console.log("✓ deepseek 多币种余额:", ds.headline.amt);
 
 // OpenRouter：普通 Key 周期额度 + 今日费用
-const or = await PROVIDERS.openrouter.query(cfg());
+const or = await run("openrouter", cfg());
 const quota = or.entries.find((e) => e.name.includes("周期额度"));
 assert.equal(quota.remain, "$15.00");
 assert.equal(quota.used, "$5.00");
@@ -121,19 +184,19 @@ assert.equal(daily.used, "$2.50");
 console.log("✓ openrouter Key 额度 + 今日费用:", quota.remain, "/", daily.used);
 
 // OpenRouter：Management Key 账户 credits
-const orAcc = await PROVIDERS["openrouter-account"].query(cfg());
+const orAcc = await run("openrouter-account", cfg());
 assert.equal(orAcc.entries[0].remain, "$70.00");
 console.log("✓ openrouter-account credits:", orAcc.entries[0].remain);
 
 // Moonshot 国内/国际：币种随地域
-const msCn = await PROVIDERS["moonshot-cn"].query(cfg());
+const msCn = await run("moonshot-cn", cfg());
 assert.equal(msCn.entries[0].remain, "¥8.50");
-const msIntl = await PROVIDERS["moonshot-intl"].query(cfg());
+const msIntl = await run("moonshot-intl", cfg());
 assert.equal(msIntl.entries[0].remain, "$42.25");
 console.log("✓ moonshot-cn ¥8.50 / moonshot-intl $42.25");
 
 // Z.ai / 智谱：Coding Plan 窗口按 unit 分类（CREDIT_LIMIT 改名后的实测载荷）
-const zai = await PROVIDERS.zai.query(cfg());
+const zai = await run("zai", cfg());
 assert.equal(zai.entries.length, 3, "5 小时 / 周 / MCP 三个窗口");
 assert.deepEqual(zai.entries.map((e) => e.name),
   ["Token 用量（5 小时）", "Token 用量（周）", "MCP 用量（月）"], "展示顺序固定，与数组位置无关");
@@ -151,14 +214,14 @@ zaiRoute[2].data.limits = [
   { type: "CREDIT_LIMIT", unit: 6, number: 1, percentage: 42, nextResetTime: ZAI_RESET },
   { type: "TOKENS_LIMIT", unit: 3, number: 5, percentage: 7 },
 ];
-const zaiCn = await PROVIDERS["zai-cn"].query(cfg());
+const zaiCn = await run("zai-cn", cfg());
 assert.equal(zaiCn.state, "ok");
 assert.deepEqual(zaiCn.entries.map((e) => e.name), ["Token 用量（5 小时）", "Token 用量（周）"]);
 assert.deepEqual(zaiCn.entries.map((e) => e.pct), [7, 42], "周窗口排在数组前面也不得串到 5 小时标签下");
 console.log("✓ zai-cn 旧拼写 + 乱序:", zaiCn.entries.map((e) => `${e.name}=${e.pct}%`).join(" | "));
 
 // MiniMax：Token Plan 窗口（显式剩余百分比取反为已用）
-const mm = await PROVIDERS.minimax.query(cfg());
+const mm = await run("minimax", cfg());
 assert.equal(mm.entries.length, 2);
 const cur = mm.entries.find((e) => e.name.includes("当前窗口"));
 assert.equal(cur.pct, 20);
@@ -168,7 +231,7 @@ assert.match(wk.note, /1.5×/);
 console.log("✓ minimax Token Plan 窗口:", mm.entries.map((e) => `${e.name}=${e.pct}%`).join(" | "));
 
 // OpenAI 组织：用量 + 费用（同供应商合并）
-const oai = await PROVIDERS["openai-org"].query(cfg());
+const oai = await run("openai-org", cfg());
 assert.equal(oai.state, "ok");
 assert.equal(oai.entries.filter((e) => e.kind === "usage").length, 2, "汇总 + 模型明细");
 assert.equal(oai.entries.find((e) => e.name.includes("汇总")).used, "132");
@@ -177,21 +240,21 @@ assert.ok(oai.entries.some((e) => e.kind === "cost" && e.used === "$4.00"));
 console.log("✓ openai-org 用量(132 tokens)+费用($4.00):", oai.entries.map((e) => e.name).join(" | "));
 
 // Anthropic 组织：缓存写入口径求和 + 美分转美元
-const ant = await PROVIDERS["anthropic-org"].query(cfg());
+const ant = await run("anthropic-org", cfg());
 assert.equal(ant.state, "ok");
 assert.equal(ant.entries.find((e) => e.name.includes("汇总")).used, "105");
 assert.equal(ant.entries.find((e) => e.kind === "cost").used, "$1.24");
 console.log("✓ anthropic-org 用量(105)+费用($1.24)");
 
 // OpenCode：3 窗口 + allowance
-const oc = await PROVIDERS.opencode.query(cfg({ allowanceToken: "oatok", orgId: "org-x" }));
+const oc = await run("opencode", cfg({ allowanceToken: "oatok", orgId: "org-x" }));
 assert.equal(oc.entries.length, 4);
 assert.equal(oc.state, "warn");
 assert.equal(oc.entries.find((e) => e.name.startsWith("allowance")).remain, "$26.50");
 console.log("✓ opencode 窗口 + allowance:", oc.headline.pct);
 
 // Command Code：窗口 + 月额度（保留兼容来源；重置时间补齐：epoch-ms / ISO / 诚实缺省）
-const cc = await PROVIDERS.commandcode.query(cfg());
+const cc = await run("commandcode", cfg());
 assert.equal(cc.entries.length, 3);
 assert.equal(cc.state, "ok");
 const monthly = cc.entries.find((e) => e.name.startsWith("月额度"));
@@ -212,7 +275,7 @@ console.log("✓ commandcode:", cc.entries.map((e) => `${e.name}:${e.pct}% (${e.
 // 窗口缺 resetAt 的真实缺省路径：如实标注「未提供重置时刻」，不伪造时刻
 const ccRoute = ROUTES.find(([p]) => p === "/alpha/billing/credits");
 ccRoute[2].windowLimits = { fiveHour: { used: 2.0, cap: 10.0 }, weekly: { used: 8.5, cap: 30.0 } };
-const ccNoReset = await PROVIDERS.commandcode.query(cfg());
+const ccNoReset = await run("commandcode", cfg());
 for (const e of ccNoReset.entries.filter((x) => x.kind === "win" && !x.name.startsWith("月额度"))) {
   assert.equal(e.reset, "—");
   assert.equal(e.note, "未提供重置时刻");
@@ -229,7 +292,7 @@ for (const [id, badBase] of [
   ["zai", "https://api.z.ai/not-allowed"],
 ]) {
   const before = fetchCount;
-  const bad = await PROVIDERS[id].query(cfg({ baseUrl: badBase }));
+  const bad = await run(id, cfg({ baseUrl: badBase }));
   assert.equal(bad.state, "err");
   assert.equal(bad.error.code, "endpoint", `${id} ${badBase} 应报 endpoint`);
   assert.equal(fetchCount, before, `${id} 地址越界时不得发起网络请求`);
@@ -239,10 +302,10 @@ console.log("✓ 官方主机/路径/端口/查询串校验（无网络请求）
 // 失败路径：401 → err/auth；未配置 Key → off
 installFetch();
 globalThis.fetch = async (url) => ({ ok: false, status: 401, text: async () => "" });
-const dsBad = await PROVIDERS.deepseek.query(cfg());
+const dsBad = await run("deepseek", cfg());
 assert.equal(dsBad.state, "err");
 assert.equal(dsBad.error.code, "auth");
-const dsOff = await PROVIDERS.deepseek.query({ apiKey: "" });
+const dsOff = await run("deepseek", { apiKey: "" });
 assert.equal(dsOff.state, "off");
 console.log("✓ 401 → err/auth；无 Key → off");
 

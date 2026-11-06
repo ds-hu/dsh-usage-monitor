@@ -46,7 +46,7 @@ function client(fetch, { storage = new Map(), search = "", clock = null, mobile 
     context.__setNow = (value) => { fixed.Now = value; };
   }
   // 只为纯展示函数提供测试访问点，不修改生产导出或加载方式。
-  vm.runInNewContext(source.replace("exports.apply = apply;", "exports.__test = { buildEntryView, metricRowsOf, selectPrimaryMetric, supplierStatus, connStateOf, seasonCountdown, seasonSplitText, fmtBig, weeklyEntryOf, selectBarMetrics, usageRatioOf, splitPartsOf, chartDomainOf, quotaSegmentsOf, quotaLegendOf, quotaUsedAt, clockOf, dayStartOf }; exports.apply = apply;"), context);
+  vm.runInNewContext(source.replace("exports.apply = apply;", "exports.__test = { buildEntryView, metricRowsOf, selectPrimaryMetric, supplierStatus, connStateOf, seasonCountdown, seasonSplitText, fmtBig, weeklyEntryOf, windowTierOf, selectBarMetrics, usageRatioOf, splitPartsOf, chartDomainOf, quotaSegmentsOf, quotaLegendOf, quotaUsedAt, clockOf, dayStartOf }; exports.apply = apply;"), context);
   plugin.apply({ locale: { register(ns, locales_) { Object.assign(locales, locales_); dictionary = locales_.zh; } }, effect(fn) { cleanups.push(fn()); }, slots: {
     inject(name, fn) { return fn(); }, register(descriptor, component) { slots[descriptor.name ?? descriptor.key] = component; },
   } });
@@ -271,8 +271,8 @@ test("the card bar prefers the weekly window, then the tightest window, then fal
   const weekly = bar(supplier([entry("5 小时", 71), entry("周窗口 · GOAT", 12)]));
   assert.equal(weekly.weekly, true);
   assert.equal(weekly.label, "周");
-  assert.equal(weekly.entry.name, "周窗口 · GOAT");
-  assert.equal(weekly.entry.pct, 12);
+  assert.equal(weekly.name, "周窗口 · GOAT");
+  assert.equal(weekly.pct, 12);
   assert.equal(weekly.reset, "周窗口 · GOAT 重置", "重置时间必须属于同一个窗口");
   // 没有周窗口 → 最紧的有效窗口，标签用它自己的名字（不冒充「周」）
   const tightest = bar(supplier([entry("5 小时", 12), entry("月额度 · GOAT", 71)]));
@@ -288,6 +288,82 @@ test("the card bar prefers the weekly window, then the tightest window, then fal
   assert.equal(bar(null), null);
 });
 
+test("names are rendered by the client dictionary, and an unknown key never leaks", async () => {
+  const state = payload("A", [
+    supplier([
+      { kind: "win", key: "window.weekly", short: "周", name: "周用量", nameSpec: { atom: "windowWeeklyUsage" }, pct: 40, resetAt: Date.now() + 3_600_000 },
+      { kind: "bal", key: "cny", name: "余额 · CNY", nameSpec: { atom: "entryBalance", args: { currency: "CNY" } }, remain: "¥41.99", pct: null },
+      { kind: "bal", key: "unknown", name: "旧名", nameSpec: { atom: "atomThatDoesNotExist" }, remain: "$1", pct: null },
+    ], { id: "moonshot-cn", name: "Moonshot 国内", nameSpec: { atom: "supplierRegionCn", args: { brand: "Moonshot" } } }),
+  ]);
+  // 卡片上的 plan 名同样来自注册表键
+  state.active.nameSpec = { atom: "supplierRegionCn", args: { brand: "Moonshot" } };
+  const host = client(async () => response(state));
+  // 英文词典：名字的措辞只能来自客户端，宿主那份中文一个字都不该进来
+  const tEn = (key, params = {}) => String(host.locales.en[key] ?? key)
+    .replace(/\{(\w+)\}/g, (_, name) => params[name] ?? `{${name}}`);
+  let tree;
+  try {
+    tree = await mount(host, { t: tEn });
+    assert.equal(textOf(tree.root.findByProps({ className: "qm-plan" })), "Moonshot (China)");
+    await open(tree);
+    assert.equal(textOf(tree.root.findByProps({ className: "qm-row-name" })), "Moonshot (China)");
+    await expand(tree, "moonshot-cn");
+    const table = textOf(tree.root.findByProps({ className: "qm-metric-tables" }));
+    assert.ok(table.includes("Weekly usage"), "条目名来自词典：" + table);
+    assert.ok(table.includes("Balance · CNY"), "名字里的参数由宿主给：" + table);
+    assert.ok(table.includes("旧名"), "词典缺键时回落到旧文案，绝不显示键名：" + table);
+    assert.ok(!table.includes("atomThatDoesNotExist"));
+  } finally { await act(async () => tree?.unmount()); }
+});
+
+test("with an English dictionary no host Chinese reaches the card or the panel", async () => {
+  const state = payload("A", [
+    supplier([
+      { kind: "win", key: "window.weekly", short: "周", shortSpec: { atom: "weekTag" }, name: "周用量", nameSpec: { atom: "windowWeeklyUsage" }, pct: 20, resetAt: Date.now() + 3_600_000 },
+      { kind: "win", key: "window.monthly", short: "月", shortSpec: { atom: "windowShortMonth" }, name: "月用量", nameSpec: { atom: "windowMonthlyUsage" }, pct: 60, resetAt: Date.now() + 3_600_000 },
+      { kind: "usage", key: "org.tokens", name: "组织 Token 用量（汇总）", nameSpec: { atom: "entryOrgTokens" }, used: "3.00M tokens", pct: null,
+        period: { kind: "utcYesterday" }, facts: [["partRequests", "12.0K"]], notes: ["noteCompletionsScope"] },
+    ], { id: "zai", name: "Z.ai", displayKeys: ["window.monthly", "window.weekly"] }),
+  ]);
+  const host = client(async () => response(state));
+  const tEn = (key, params = {}) => String(host.locales.en[key] ?? key)
+    .replace(/\{(\w+)\}/g, (_, name) => params[name] ?? `{${name}}`);
+  const textsOf = (tree, cls) => tree.root.findAll((node) => String(node.props?.className || "").split(" ").includes(cls)).map(textOf);
+  let tree;
+  try {
+    tree = await mount(host, { t: tEn });
+    // 进度条的短标签：周/月来自词典，不是宿主给的 short
+    assert.deepEqual(textsOf(tree, "qm-bar-label"), ["Month", "Week"]);
+    await open(tree);
+    // 展开后：口径列、分解列头、折叠说明同样是词典渲染的
+    await expand(tree, "zai");
+    const panel = textOf(panelOf(tree));
+    assert.ok(panel.includes("Requests"), "分解列头：" + panel);
+    assert.ok(panel.includes("UTC yesterday (last complete day)"), "口径列：" + panel);
+    assert.ok(panel.includes("Completions usage API"), "说明进 ⓘ：" + panel);
+    assert.ok(!/[\u4e00-\u9fff]/.test(panel), "英文界面里还有宿主中文：" + panel);
+  } finally { await act(async () => tree?.unmount()); }
+});
+
+test("the weekly window is identified by declared identity, not by a Chinese name", () => {
+  const { helpers, t } = client(async () => response(payload("A")));
+  // key 说话：英文显示名照样认得出周窗口（旧实现按 /周/ 匹配名字会漏掉这条）
+  const englishWeek = { kind: "win", key: "window.MiniMax-M2.weekly", short: "W", name: "MiniMax-M2 · weekly", pct: 30 };
+  assert.equal(helpers.windowTierOf(englishWeek), "week");
+  assert.equal(helpers.weeklyEntryOf([englishWeek])?.key, "window.MiniMax-M2.weekly");
+  assert.equal(helpers.selectBarMetrics(supplier([englishWeek]), t)[0].weekly, true);
+  // 名字里带「周」但 key 说不是周窗口：以 key 为准，旧实现会把这条当成周窗口
+  const rolling = { kind: "win", key: "window.rolling", short: "5h", name: "周边调用用量", pct: 90 };
+  assert.equal(helpers.windowTierOf(rolling), "5h");
+  assert.equal(helpers.weeklyEntryOf([rolling]), null, "「周边」不是「周窗口」");
+  // 供应商声明的窗口长度同样是证据：没有 key 的供应商也能被认出
+  assert.equal(helpers.windowTierOf({ kind: "win", windowMs: 7 * 86400_000, name: "Window" }), "week");
+  // 认不出来就是未知：不冒充周窗口，也不画一条假条
+  assert.equal(helpers.windowTierOf({ kind: "win", name: "Quota" }), null);
+  assert.equal(helpers.weeklyEntryOf([{ kind: "win", name: "Quota", pct: 50 }]), null);
+});
+
 test("the bar follows the real Command Code shape: the month window is tighter but the week wins", () => {
   const { helpers, t } = client(async () => response(payload("A")));
   // 本机真实读数：5h 0% / 周 31% / 月额度 61%。最紧的是月额度，但卡片要报的是这一周。
@@ -297,8 +373,8 @@ test("the bar follows the real Command Code shape: the month window is tighter b
     { kind: "win", name: "月额度 · GOAT", pct: 61, limit: "$70.00", used: "$42.62", remain: "$27.38", reset: "10月17日 重置" },
   ], { id: "commandcode", name: "Command Code" });
   const weekBar = helpers.selectBarMetrics(commandCode, t)[0];
-  assert.equal(weekBar.entry.name, "周窗口 · GOAT", "月额度更紧也不许顶掉周窗口");
-  assert.equal(weekBar.entry.pct, 31);
+  assert.equal(weekBar.name, "周窗口 · GOAT", "月额度更紧也不许顶掉周窗口");
+  assert.equal(weekBar.pct, 31);
   assert.equal(weekBar.label, "周");
   assert.equal(weekBar.reset, "10月11日 重置", "重置时间跟着周窗口，不借月额度的");
   assert.equal(weekBar.tone, "ok");
@@ -307,7 +383,7 @@ test("the bar follows the real Command Code shape: the month window is tighter b
     { kind: "win", name: "Token 用量（5 小时）", pct: 15, reset: "约 3 小时后重置", note: "官方插件字段" },
     { kind: "win", name: "Token 用量（周）", pct: 18, reset: "10月12日 重置", note: "官方插件字段" },
   ], { id: "zai-cn", name: "智谱 Coding Plan" });
-  assert.equal(helpers.selectBarMetrics(zai, t)[0].entry.name, "Token 用量（周）");
+  assert.equal(helpers.selectBarMetrics(zai, t)[0].name, "Token 用量（周）");
 });
 
 test("the card bar takes its colour from the supplier thresholds and claims none for stale data", () => {
@@ -335,7 +411,7 @@ test("watched limits keep their configured order and fall back to the default ru
   ];
   // 配置顺序 = 排列顺序（不是按百分比排序）；每条按自己的百分比分档
   const watched = bar(supplier(entries, { displayKeys: ["window.monthly", "window.weekly"] }));
-  const keysOf = (bars) => Array.from(bars, (b) => b.entry.key);
+  const keysOf = (bars) => Array.from(bars, (b) => b.key);
   assert.deepEqual(keysOf(watched), ["window.monthly", "window.weekly"]);
   assert.deepEqual(Array.from(watched, (b) => b.label), ["月", "周"]);
   assert.deepEqual(Array.from(watched, (b) => b.tone), ["warn", "ok"]);
