@@ -16,6 +16,8 @@ ms.html
 st.html
 ds_api.html
 *.tgz
+# 本仓库用 npm（package-lock.json 在版本控制里）；误跑 pnpm 会落下这个文件
+pnpm-lock.yaml
 *.tar.gz
 .DS_Store
 DSH-plugin-research.md
