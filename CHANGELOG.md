@@ -1,9 +1,18 @@
 # 更新日志
 
 本文件记录本插件的可见行为变更，格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
-版本号遵循语义化版本。发布标签带 `fork-` 前缀，不与上游 `shxtmaker/dsh-token-quota` 的 `vX.Y.Z` 重名。
+版本号遵循语义化版本。发布标签为 `vX.Y.Z`（下一版起；此前的 `fork-v2.x` 标签保留原样，不重打）。
 
 v2.0.x 的记录自 README 迁入本文件（见文末「更早版本」），v1.x 的变更散见 [docs/](docs/) 下的对应执行记录。
+
+## [未发布]
+
+### 变更
+
+- **仓库独立**：GitHub 仓库改名为 `ds-hu/dsh-token-quota` 并脱离 fork network，Issues 重新开启，
+  问题反馈回到本仓库。
+- **发布标签不再带 `fork-` 前缀**：下一版起标签为 `vX.Y.Z`；历史 `fork-v2.0.5`–`fork-v2.6.0` 保留原样。
+- **LICENSE 恢复可识别**：版权行的 URL 并回版权行本身，GitHub 不再因多出的独立行判成 NOASSERTION。
 
 ## [2.6.0] - 2026-11-05
 

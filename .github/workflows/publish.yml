@@ -6,7 +6,7 @@
 #   npm login
 #   npm trust github @ds-hu/dsh-token-quota \
 #     --file publish.yml \
-#     --repo ds-hu/dsh-usage-monitor --allow-publish
+#     --repo ds-hu/dsh-token-quota --allow-publish
 #
 # `--file` 只收文件名：写成 .github/workflows/publish.yml 会被
 # "GitHub Actions workflow must be just a file not a path" 拒掉。
@@ -16,13 +16,14 @@
 # 只有 push、release、workflow_dispatch 换得到可信发布令牌，pull_request_target
 # 与 issue_comment 会被 registry 拒绝。
 #
-# 标签带 fork- 前缀（见 docs/releasing.md），历史 vX.Y.Z 标签不会触发本工作流。
+# 标签为 vX.Y.Z（2026-11 起不再用 fork- 前缀，见 docs/releasing.md）；历史
+# fork-v2.x 标签不在本工作流的触发范围内。
 
 name: publish
 
 on:
   push:
-    tags: ['fork-v*']
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -48,13 +49,13 @@ jobs:
         run: |
           npm test
           npm run test:pack
-      # 标签与 manifest 必须指同一个版本，否则一个手滑的 fork-v 前缀就会把
+      # 标签与 manifest 必须指同一个版本，否则一个手滑的前缀就会把
       # 上一版号重新发一遍（registry 以 2.4.0 已存在为由拒绝，但报错会绕远路）。
       - name: Refuse a tag that disagrees with the manifest
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           version="$(node -p "require('./package.json').version")"
-          if [ "${GITHUB_REF_NAME#fork-v}" != "$version" ]; then
+          if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
             echo "tag $GITHUB_REF_NAME does not match package.json $version" >&2
             exit 1
           fi

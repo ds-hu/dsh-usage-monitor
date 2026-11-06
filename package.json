@@ -5,13 +5,13 @@
   "icon": "./icon.svg",
   "author": "shxtmaker <https://github.com/shxtmaker>",
   "license": "MIT",
-  "homepage": "https://github.com/ds-hu/dsh-usage-monitor#readme",
+  "homepage": "https://github.com/ds-hu/dsh-token-quota#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ds-hu/dsh-usage-monitor.git"
+    "url": "git+https://github.com/ds-hu/dsh-token-quota.git"
   },
   "bugs": {
-    "url": "https://github.com/ds-hu/dsh-usage-monitor/issues"
+    "url": "https://github.com/ds-hu/dsh-token-quota/issues"
   },
   "files": [
     "lib",

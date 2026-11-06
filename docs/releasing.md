@@ -1,7 +1,8 @@
 # 发布流程
 
-适用于 `@ds-hu/dsh-token-quota` 的版本发布。远端：`origin` = GitHub `ds-hu/dsh-usage-monitor`（fork，用于发布）；
-`upstream` = `shxtmaker/dsh-token-quota`，只拉不推。发布标签带 `fork-` 前缀。
+适用于 `@ds-hu/dsh-token-quota` 的版本发布。远端：`origin` = GitHub `ds-hu/dsh-token-quota`（独立仓库，
+2026-11 已脱离 fork network 并改名，旧名 `ds-hu/dsh-usage-monitor` 只靠 GitHub 跳转可用）；
+`upstream` = `shxtmaker/dsh-token-quota`，只拉不推。发布标签为 `vX.Y.Z`。
 
 ## 0. 前置检查
 
@@ -39,11 +40,13 @@ git diff --check
 ```bash
 git add -A
 git commit -m "release: vX.Y.Z <一句话摘要>"
-git tag -a fork-vX.Y.Z -m "vX.Y.Z <要点逐条>"
+git tag -a vX.Y.Z -m "vX.Y.Z <要点逐条>"
 ```
 
-标签一律用 **annotated tag**（`-a`），与 v1.1.1 起的既有标签一致；`fork-` 前缀避免与上游
-`vX.Y.Z` 重名。多行说明写进文件后用 `-F`，不要在 PowerShell 里拼引号。
+标签一律用 **annotated tag**（`-a`），与 v1.1.1 起的既有标签一致。2026-11 脱离 fork network 后标签
+命名空间独立，不再加 `fork-` 前缀：下一版起直接写 `vX.Y.Z`。历史 `fork-v2.0.5`–`fork-v2.6.0` 保留原样、
+不重打；本地属于上游历史的 `v0.1.0`–`v2.0.4` 标签也不推送——推上去只会让 publish 工作流拿旧版号
+去对 manifest，然后失败。多行说明写进文件后用 `-F`，不要在 PowerShell 里拼引号。
 
 ## 4. 打包产物
 
@@ -51,7 +54,7 @@ git tag -a fork-vX.Y.Z -m "vX.Y.Z <要点逐条>"
 npm pack --pack-destination .                       # npm 安装包（60 个文件，含 lib/test/scripts）
                                                     # 产物名 ds-hu-dsh-token-quota-X.Y.Z.tgz：scoped 包名带 owner 前缀
 git archive --format=tar.gz --prefix=dsh-token-quota-X.Y.Z/ \
-  -o dsh-token-quota-X.Y.Z-source.tar.gz fork-vX.Y.Z  # 源码快照（额外含 docs/ 与 .github/）
+  -o dsh-token-quota-X.Y.Z-source.tar.gz vX.Y.Z      # 源码快照（额外含 docs/ 与 .github/）
 ```
 
 校验和用 `Get-FileHash <file> -Algorithm SHA256`（Windows 上没有 `sha256sum`）。
@@ -71,7 +74,7 @@ for f in test/*.mjs; do node --test-reporter=tap "$f"; done   # 受限沙箱下�
 
 ```bash
 git push origin main
-git push origin fork-vX.Y.Z
+git push origin vX.Y.Z
 ```
 
 推送走 DSH 的 `bridge_run {cmd:"git", …}`（在沙箱外执行，复用本机凭据）；argv 必须同时给出远端
@@ -80,13 +83,13 @@ git push origin fork-vX.Y.Z
 
 需要注意的一致性检查：
 
-- 用 `gh api repos/ds-hu/dsh-usage-monitor/tags --jq '.[].name'` 核对远端标签与本地 `git tag`，
+- 用 `gh api repos/ds-hu/dsh-token-quota/tags --jq '.[].name'` 核对远端标签与本地 `git tag`，
   确认没有该远端缺失的历史标签（v1.2.1 曾只存在于 GitHub）。
-- `origin` 指向 `ds-hu/dsh-usage-monitor`；旧名 `cup113/dsh-usage-monitor` 曾只靠跳转可用，
-  容易误判，推送前用 `git remote -v` 确认一次。
+- `origin` 指向 `ds-hu/dsh-token-quota`；旧名 `ds-hu/dsh-usage-monitor` 与更早的
+  `cup113/dsh-usage-monitor` 都只靠跳转可用，容易误判，推送前用 `git remote -v` 确认一次。
 - 推送是外部可见且难以撤回的操作：确认版本号、目标远端与提交内容后再执行。
 
-推 `fork-vX.Y.Z` 标签会触发 `.github/workflows/publish.yml`，发布到 npm——见下一节。
+推 `vX.Y.Z` 标签会触发 `.github/workflows/publish.yml`，发布到 npm——见下一节。
 
 ## 6. npm 发布（CI）
 
@@ -100,13 +103,14 @@ git push origin fork-vX.Y.Z
 npm login
 npm trust github @ds-hu/dsh-token-quota \
   --file publish.yml \
-  --repo ds-hu/dsh-usage-monitor --allow-publish
+  --repo ds-hu/dsh-token-quota --allow-publish
 npm trust list @ds-hu/dsh-token-quota
 ```
 
 `--file` 只收文件名，写成 `.github/workflows/publish.yml` 会被
 `GitHub Actions workflow must be just a file not a path` 拒掉。`--repo` 必须是
-`ds-hu/dsh-usage-monitor`：文件名或仓库任一变化都要重新建一次信任关系。
+`ds-hu/dsh-token-quota`：文件名或仓库任一变化都要重新建一次信任关系——
+仓库改名也算变化，所以旧名 `ds-hu/dsh-usage-monitor` 下建的信任关系要按上面重跑一遍。
 
 `package.json` 的 `repository.url` 必须指向同一仓库：registry 会拿它和 provenance 里的
 仓库比对，不一致直接 `422 … Error verifying sigstore provenance bundle: Failed to validate

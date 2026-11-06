@@ -1,7 +1,7 @@
 # dsh-token-quota
 
 [![npm](https://img.shields.io/npm/v/@ds-hu/dsh-token-quota)](https://www.npmjs.com/package/@ds-hu/dsh-token-quota)
-[![verify](https://github.com/ds-hu/dsh-usage-monitor/actions/workflows/verify.yml/badge.svg)](https://github.com/ds-hu/dsh-usage-monitor/actions/workflows/verify.yml)
+[![verify](https://github.com/ds-hu/dsh-token-quota/actions/workflows/verify.yml/badge.svg)](https://github.com/ds-hu/dsh-token-quota/actions/workflows/verify.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![DSH](https://img.shields.io/badge/DSH-%E2%89%A5%200.1.7--rc.2-4c6ef5)](#安装)
 
@@ -16,7 +16,7 @@ DeepSeek Harness 用量监控插件：查看当前会话对应供应商的周期
 
 Plugins 面板中显示为 **用量监控**（英文 **Usage monitor**）：图标是根目录 `icon.svg`，标题与一句话说明来自 `locale/zh.json` 与 `locale/en.json` 的 `meta`。
 
-[npm](https://www.npmjs.com/package/@ds-hu/dsh-token-quota) · [问题反馈](https://github.com/ds-hu/dsh-usage-monitor/issues)
+[npm](https://www.npmjs.com/package/@ds-hu/dsh-token-quota) · [问题反馈](https://github.com/ds-hu/dsh-token-quota/issues)
 
 ## v2.6.0 更新
 
@@ -98,8 +98,8 @@ dsh --profile web
 ### 从源码安装
 
 ```bash
-git clone https://github.com/ds-hu/dsh-usage-monitor.git
-cd dsh-usage-monitor
+git clone https://github.com/ds-hu/dsh-token-quota.git
+cd dsh-token-quota
 npm ci
 dsh plugin --profile web add "link:$(pwd)"
 dsh --profile web
@@ -247,9 +247,11 @@ npm run test:lifecycle -- --app 'C:/path/DeepSeek Harness.exe' --output '.scratc
 
 ## 来源与致谢
 
-本仓库是 [shxtmaker/dsh-token-quota](https://github.com/shxtmaker/dsh-token-quota) 的 fork，在 npm 上以
-`@ds-hu/dsh-token-quota` 发布。插件 id、设置命名空间、数据目录与各家供应商的查询规则都沿用上游，
-行为变更逐条记在 [CHANGELOG](CHANGELOG.md)。上游没有 npm 包，需要它的原始版本请用上游的 Releases。
+本仓库派生自 [shxtmaker/dsh-token-quota](https://github.com/shxtmaker/dsh-token-quota)，现已脱离 GitHub
+fork network、作为独立仓库维护，在 npm 上以 `@ds-hu/dsh-token-quota` 发布。插件 id、设置命名空间、
+数据目录与各家供应商的查询规则都沿用上游，行为变更逐条记在 [CHANGELOG](CHANGELOG.md)。
+问题反馈走[本仓库 Issues](https://github.com/ds-hu/dsh-token-quota/issues)；
+上游没有 npm 包，需要它的原始版本请用上游的 Releases。
 
 ## 许可证
 

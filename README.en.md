@@ -1,7 +1,7 @@
 # dsh-token-quota
 
 [![npm](https://img.shields.io/npm/v/@ds-hu/dsh-token-quota)](https://www.npmjs.com/package/@ds-hu/dsh-token-quota)
-[![verify](https://github.com/ds-hu/dsh-usage-monitor/actions/workflows/verify.yml/badge.svg)](https://github.com/ds-hu/dsh-usage-monitor/actions/workflows/verify.yml)
+[![verify](https://github.com/ds-hu/dsh-token-quota/actions/workflows/verify.yml/badge.svg)](https://github.com/ds-hu/dsh-token-quota/actions/workflows/verify.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![DSH](https://img.shields.io/badge/DSH-%E2%89%A5%200.1.7--rc.2-4c6ef5)](#install)
 
@@ -18,7 +18,7 @@ Current version: **v2.6.0**. Requires **DSH ≥ 0.1.7-rc.2**; real desktop and W
 The Plugins panel shows it as **Usage monitor** (Chinese **用量监控**): the icon is `icon.svg` in the package root, and the
 title and one-line description come from `meta` in `locale/zh.json` and `locale/en.json`.
 
-[npm](https://www.npmjs.com/package/@ds-hu/dsh-token-quota) · [Issues](https://github.com/ds-hu/dsh-usage-monitor/issues)
+[npm](https://www.npmjs.com/package/@ds-hu/dsh-token-quota) · [Issues](https://github.com/ds-hu/dsh-token-quota/issues)
 
 ## What's new in v2.6.0
 
@@ -111,8 +111,8 @@ again with the new package, then restart DSH and refresh the Web page.
 ### From source
 
 ```bash
-git clone https://github.com/ds-hu/dsh-usage-monitor.git
-cd dsh-usage-monitor
+git clone https://github.com/ds-hu/dsh-token-quota.git
+cd dsh-token-quota
 npm ci
 dsh plugin --profile web add "link:$(pwd)"
 dsh --profile web
@@ -347,10 +347,12 @@ configure real supplier keys.
 
 ## Credits
 
-This repository is a fork of [shxtmaker/dsh-token-quota](https://github.com/shxtmaker/dsh-token-quota) and is published
-on npm as `@ds-hu/dsh-token-quota`. The plugin id, the settings namespace, the data directory and each supplier's query
-rules come from upstream; behaviour changes are recorded one by one in [CHANGELOG](CHANGELOG.md). Upstream has no npm
-package — use its Releases for the original.
+This repository started as a fork of [shxtmaker/dsh-token-quota](https://github.com/shxtmaker/dsh-token-quota); it has
+since left the GitHub fork network and is maintained as a standalone repository, published on npm as
+`@ds-hu/dsh-token-quota`. The plugin id, the settings namespace, the data directory and each supplier's query rules come
+from upstream; behaviour changes are recorded one by one in [CHANGELOG](CHANGELOG.md). Report problems through
+[this repository's issues](https://github.com/ds-hu/dsh-token-quota/issues). Upstream has no npm package — use its
+Releases for the original.
 
 ## License
 
