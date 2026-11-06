@@ -1120,3 +1120,113 @@ test("renaming a metered supplier writes only meteredNames, never a supplier con
     assert.ok(!Object.hasOwn(posts[0], "suppliers"), "改名不得写进供应商配置");
   } finally { await act(async () => tree?.unmount()); }
 });
+
+// ---------- 面板写入：锁与身份只有一个事实源 ----------
+/** 挂住一次请求：写入必须能在中途被观测，而不是只有结束时才有行为。 */
+const gate = () => { let open; const promise = new Promise((done) => { open = done; }); return { promise, open }; };
+/** 带一个非密需要字段的供应商：编辑器里有一个值直接来自服务端配置的输入框。 */
+const editorState = (orgId) => payload("OpenCode", [supplier([], { orgId, meta: { needs: [{ key: "orgId", secret: false }] } })]);
+
+test("写入在途时进入同一家：先等它结算，再按服务端真值打开编辑器", async () => {
+  let state = editorState("org-old");
+  const post = gate();
+  const host = client(async (url, opts) => {
+    if (opts?.method !== "POST") return response(state);
+    await post.promise;
+    state = editorState("org-new");
+    return response({ ok: true });
+  });
+  let tree;
+  try {
+    tree = await mount(host, {}, host.Page);
+    await act(async () => tab(tree, "供应商").props.onClick());
+    const row = () => tree.root.findByProps({ "data-supplier": "opencode" });
+    await act(async () => { row().findByProps({ type: "checkbox" }).props.onChange({}); });
+    // 锁由写入自己登记，视图只读它——不再各自对一份写入集合求交，也不靠渲染时机撞对
+    assert.equal(row().findByProps({ type: "checkbox" }).props.disabled, true, "写入在途：行内开关被锁禁用");
+    await act(async () => button(tree, "配置").props.onClick());
+    assert.equal(tree.root.findAllByType("input").length, 0, "在途写入结算前不拿旧草稿开编辑器");
+    await act(async () => { post.open(); });
+    assert.ok(tree.root.findAllByType("input").some((input) => input.props.value === "org-new"), "结算后按服务端真值打开编辑器");
+    await act(async () => button(tree, "取消").props.onClick());
+    assert.equal(row().findByProps({ type: "checkbox" }).props.disabled, false, "结算后释放锁");
+  } finally { await act(async () => tree?.unmount()); }
+});
+
+test("改过草稿之后，迟到的连接测试结果不再属于当前草稿", async () => {
+  const tests = [gate(), gate()];
+  let call = 0;
+  const host = client(async (url) => {
+    if (!url.endsWith("/test")) return response(editorState("org-1"));
+    const held = tests[call++];
+    await held.promise;
+    return response({ ok: true });
+  });
+  let tree;
+  try {
+    tree = await mount(host, {}, host.Page);
+    await act(async () => tab(tree, "供应商").props.onClick());
+    await act(async () => button(tree, "配置").props.onClick());
+    const testButton = () => tree.root.findAllByType("button").find((node) => textOf(node).startsWith("⟳"));
+    const results = () => tree.root.findAll((node) => /s-test-res/.test(String(node.props?.className || ""))).map(textOf);
+    // 对照：草稿没动过，结果仍属于它
+    await act(async () => testButton().props.onClick());
+    assert.deepEqual(results(), [host.t("testing")], "回来之前只有进行中");
+    await act(async () => { tests[0].open(); });
+    assert.deepEqual(results(), [host.t("testOk")], "草稿没动过，结果照常显示");
+    // 再测一次，回来之前改一个字段：草稿变了，这次测试的结果就不属于它了
+    await act(async () => testButton().props.onClick());
+    const orgId = () => tree.root.findAllByType("input").find((input) => input.props.value === "org-1");
+    await act(async () => { orgId().props.onChange({ target: { value: "org-2" } }); });
+    assert.deepEqual(results(), [], "改草稿后旧结果先作废");
+    await act(async () => { tests[1].open(); });
+    assert.deepEqual(results(), [], "迟到的结果不得写回新草稿");
+  } finally { await act(async () => tree?.unmount()); }
+});
+
+test("关掉面板不取消在途写入：重开时先等它结算，再显示服务端状态", async () => {
+  let state = payload("OpenCode", [supplier([])]);
+  const post = gate();
+  const host = client(async (url, opts) => {
+    if (opts?.method !== "POST") return response(state);
+    await post.promise;
+    state = payload("OpenCode", [supplier([], { todayTokens: 4321 })]);
+    return response({ ok: true });
+  });
+  let tree;
+  try {
+    tree = await mount(host);
+    await open(tree);
+    await act(async () => tab(tree, "供应商").props.onClick());
+    await act(async () => { rowOf(tree, "opencode").findByProps({ type: "checkbox" }).props.onChange({}); });
+    await act(async () => button(tree, "关闭").props.onClick());
+    assert.equal(tree.root.findAllByProps({ role: "dialog" }).length, 0, "面板已关闭");
+    await open(tree);
+    assert.equal(tree.root.findAllByProps({ role: "status" }).length, 1, "重开先等这次写入，不显示可能过期的状态");
+    await act(async () => { post.open(); });
+    assert.equal(tree.root.findAllByProps({ role: "status" }).length, 0, "结算后离开等待态");
+    assert.equal(tree.root.findAllByProps({ "data-supplier": "opencode" }).length, 1, "面板显示服务端状态");
+  } finally { await act(async () => tree?.unmount()); }
+});
+
+test("启停写入在途时再点一次不会发第二份请求", async () => {
+  const post = gate();
+  const posts = [];
+  const host = client(async (url, opts) => {
+    if (opts?.method !== "POST") return response(payload("OpenCode", [supplier([])]));
+    posts.push(JSON.parse(opts.body));
+    await post.promise;
+    return response({ ok: true });
+  });
+  let tree;
+  try {
+    tree = await mount(host, {}, host.Page);
+    await act(async () => tab(tree, "供应商").props.onClick());
+    const toggle = () => tree.root.findByProps({ "data-supplier": "opencode" }).findByProps({ type: "checkbox" });
+    await act(async () => { toggle().props.onChange({}); toggle().props.onChange({}); });
+    // 锁在 begin() 里先于任何 await 登记，第二次点击看得见它——不必再养一份 toggling 状态
+    assert.equal(posts.length, 1, "在途时的重复点击只发一份写入");
+    await act(async () => { post.open(); });
+    assert.equal(posts.length, 1);
+  } finally { await act(async () => tree?.unmount()); }
+});
