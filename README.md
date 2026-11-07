@@ -12,11 +12,24 @@ DeepSeek Harness 用量监控插件：查看当前会话对应供应商的周期
 
 ![用量监控概览：可查额度的供应商与一条「仅计量」行](docs/images/overview.png)
 
-当前版本：**v2.6.0**。要求 **DSH ≥ 0.1.7-rc.2**；真实桌面及 Web 验收环境为 **DSH 0.2.0-rc.2**。
+当前版本：**v2.7.0**。要求 **DSH ≥ 0.1.7-rc.2**；真实桌面及 Web 验收环境为 **DSH 0.2.0-rc.2**。
 
 Plugins 面板中显示为 **用量监控**（英文 **Usage monitor**）：图标是根目录 `icon.svg`，标题与一句话说明来自 `locale/zh.json` 与 `locale/en.json` 的 `meta`。
 
 [npm](https://www.npmjs.com/package/@ds-hu/dsh-token-quota) · [问题反馈](https://github.com/ds-hu/dsh-token-quota/issues)
+
+## v2.7.0 更新
+
+- **英文界面不再混中文**：限额项名（`余额 · CNY`、`模型 · …`、`月额度 · …`）、窗口短标签与供应商名改由
+  客户端词典渲染，英文界面显示 `Balance · CNY`、`Monthly quota · …`、`Moonshot (China)`；中文显示与原来逐字一致，
+  供应商列表与供应商页按渲染后的名字排序。
+- **明细表各分解项各自成列**：输入、输出、请求数、到账、赠送、订阅、周加成不再拼成
+  `输入 1.2K · 输出 800 · 请求 12`；「周期」列改由数据字段渲染，缺项写「—」，不补 0。
+- **说明默认折叠**：「账单可能延迟」「不覆盖全部产品计量」「月额度无上限」这类说明收进明细里的一处 ⓘ，
+  默认视图只留数据。
+- **内置节假日表补入 2027 年（29 天）**：元旦 1/1–1/3、春节 2/5–2/13、清明 4/3–4/5、劳动 5/1–5/5、
+  端午 6/9、中秋 9/15、国庆 10/1–10/7。此前缺 2027 会让其中 18 个工作日假期按峰价计费（126 个高峰小时），
+  并让设置页一直点名提示；此前为 2027 粘贴过覆盖表的，可在「供应商」页底部全局设置里清空。
 
 ## v2.6.0 更新
 
@@ -42,7 +55,7 @@ Plugins 面板中显示为 **用量监控**（英文 **Usage monitor**）：图�
 
 ## 安装
 
-插件从 npm 安装：**`@ds-hu/dsh-token-quota`**。离线部署时可以在源码目录 `npm pack` 打出 `ds-hu-dsh-token-quota-2.6.0.tgz`，用压缩包安装。插件包不包含 DeepSeek Harness；首次安装可能需要联网下载依赖。
+插件从 npm 安装：**`@ds-hu/dsh-token-quota`**。离线部署时可以在源码目录 `npm pack` 打出 `ds-hu-dsh-token-quota-2.7.0.tgz`，用压缩包安装。插件包不包含 DeepSeek Harness；首次安装可能需要联网下载依赖。
 
 ### Windows 桌面端
 
@@ -57,7 +70,7 @@ $desktopCli = 'D:\AI\DeepSeek- Harness\resources\runtime\cli\bin\dsh.cmd'
 离线安装时把包名换成压缩包路径：
 
 ```powershell
-$archivePath = (Resolve-Path './ds-hu-dsh-token-quota-2.6.0.tgz').Path
+$archivePath = (Resolve-Path './ds-hu-dsh-token-quota-2.7.0.tgz').Path
 & $desktopCli plugin --profile desktop add "file:$archivePath"
 ```
 
@@ -79,14 +92,14 @@ dsh --profile web
 Linux / macOS：
 
 ```bash
-dsh plugin --profile web add "file:$(pwd)/ds-hu-dsh-token-quota-2.6.0.tgz"
+dsh plugin --profile web add "file:$(pwd)/ds-hu-dsh-token-quota-2.7.0.tgz"
 dsh --profile web
 ```
 
 Windows PowerShell：
 
 ```powershell
-$archivePath = (Resolve-Path './ds-hu-dsh-token-quota-2.6.0.tgz').Path
+$archivePath = (Resolve-Path './ds-hu-dsh-token-quota-2.7.0.tgz').Path
 dsh plugin --profile web add "file:$archivePath"
 dsh --profile web
 ```
@@ -236,14 +249,14 @@ npm pack
 真实宿主验收使用独立数据目录与 profile，不修改日常配置：
 
 ```powershell
-npm run test:desktop -- --app 'C:/path/DeepSeek Harness.exe' --package 'C:/path/ds-hu-dsh-token-quota-2.6.0.tgz' --output '.scratch/desktop-v2-check'
-node scripts/verify-web.mjs --app 'C:/path/DeepSeek Harness.exe' --package 'C:/path/ds-hu-dsh-token-quota-2.6.0.tgz' --output '.scratch/web-v2-check'
+npm run test:desktop -- --app 'C:/path/DeepSeek Harness.exe' --package 'C:/path/ds-hu-dsh-token-quota-2.7.0.tgz' --output '.scratch/desktop-v2-check'
+node scripts/verify-web.mjs --app 'C:/path/DeepSeek Harness.exe' --package 'C:/path/ds-hu-dsh-token-quota-2.7.0.tgz' --output '.scratch/web-v2-check'
 npm run test:lifecycle -- --app 'C:/path/DeepSeek Harness.exe' --output '.scratch/lifecycle-v2-check'
 ```
 
 输出目录需为未使用过的目录。供应商解析测试使用模拟响应；真实 Desktop 与 Web 验收检查安装、界面、配置持久化和重新扫描，不发送聊天消息或配置真实供应商密钥。
 
-[桌面兼容性说明](docs/windows-desktop-adaptation.md) · [单一面板重构记录](docs/single-panel-refactor-execution.md) · [ADR-0002](docs/adr/0002-single-monitor-surface.md) · [侧栏与设置实施记录](docs/sidebar-settings-iteration-plan.md) · [v2.5.0 发布记录](docs/v2.5.0-release-execution.md) · [v2.6.0 发布记录](docs/v2.6.0-release-execution.md)
+[桌面兼容性说明](docs/windows-desktop-adaptation.md) · [单一面板重构记录](docs/single-panel-refactor-execution.md) · [ADR-0002](docs/adr/0002-single-monitor-surface.md) · [侧栏与设置实施记录](docs/sidebar-settings-iteration-plan.md) · [v2.6.0 发布记录](docs/v2.6.0-release-execution.md) · [v2.7.0 发布记录](docs/v2.7.0-release-execution.md)
 
 ## 来源与致谢
 

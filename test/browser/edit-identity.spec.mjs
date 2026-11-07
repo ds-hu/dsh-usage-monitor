@@ -25,7 +25,7 @@ async function openSupplier(page, dialog, name) {
 /** 展开供应商页底部的全局设置折叠段。 */
 async function openGlobal(panel) {
   const details = panel.locator("details.qm-global");
-  if (!(await details.evaluate((el) => el.open))) await details.locator("summary").click();
+  if (!(await details.evaluate((el) => el.open))) await details.locator(":scope > summary").click();
   await expect(panel.locator('input[type="number"][min="10"]')).toBeVisible();
 }
 

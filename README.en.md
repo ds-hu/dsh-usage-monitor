@@ -13,12 +13,29 @@ English · [中文](README.md)
 
 ![The overview: suppliers with queryable quotas, and one usage-only row](docs/images/overview.png)
 
-Current version: **v2.6.0**. Requires **DSH ≥ 0.1.7-rc.2**; real desktop and Web verification runs on **DSH 0.2.0-rc.2**.
+Current version: **v2.7.0**. Requires **DSH ≥ 0.1.7-rc.2**; real desktop and Web verification runs on **DSH 0.2.0-rc.2**.
 
 The Plugins panel shows it as **Usage monitor** (Chinese **用量监控**): the icon is `icon.svg` in the package root, and the
 title and one-line description come from `meta` in `locale/zh.json` and `locale/en.json`.
 
 [npm](https://www.npmjs.com/package/@ds-hu/dsh-token-quota) · [Issues](https://github.com/ds-hu/dsh-token-quota/issues)
+
+## What's new in v2.7.0
+
+- **No more Chinese leaking into the English UI.** Limit names (`余额 · CNY`, `模型 · …`, `月额度 · …`), window
+  short labels and supplier names are now rendered from the client dictionary, so the English UI reads
+  `Balance · CNY`, `Monthly quota · …` and `Moonshot (China)`. The Chinese display is unchanged character for
+  character, and the supplier list is sorted by the rendered name.
+- **Each breakdown figure has its own column.** Input, output, requests, credited, gifted, subscription and
+  weekly bonus no longer ride in one `输入 1.2K · 输出 800 · 请求 12` string; the period column comes from a data
+  field, and a missing value renders as "—" instead of a fabricated 0.
+- **Explanations are collapsed by default.** Notes such as "billing may lag" or "does not cover every product"
+  sit behind a single ⓘ in the details, so the default view carries data only.
+- **The built-in holiday table now covers 2027 (29 days).** New Year 1/1–1/3, Spring Festival 2/5–2/13,
+  Qingming 4/3–4/5, Labour Day 5/1–5/5, Dragon Boat 6/9, Mid-Autumn 9/15, National Day 10/1–10/7. Without them,
+  18 weekday holidays would have been billed at the peak rate (126 peak hours) and the settings page kept
+  flagging the gap. If you pasted a 2027 override earlier, clear it in Global settings at the bottom of the
+  Suppliers page.
 
 ## What's new in v2.6.0
 
@@ -50,7 +67,7 @@ Earlier releases are recorded in [CHANGELOG](CHANGELOG.md).
 ## Install
 
 The plugin is published on npm as **`@ds-hu/dsh-token-quota`**. For offline deployment run `npm pack` in the source
-directory to get `ds-hu-dsh-token-quota-2.6.0.tgz` and install that archive. The package does not contain DeepSeek
+directory to get `ds-hu-dsh-token-quota-2.7.0.tgz` and install that archive. The package does not contain DeepSeek
 Harness itself; the first install may need to download dependencies.
 
 ### Windows desktop app
@@ -67,7 +84,7 @@ $desktopCli = 'D:\AI\DeepSeek- Harness\resources\runtime\cli\bin\dsh.cmd'
 For an offline install, pass the archive instead of the package name:
 
 ```powershell
-$archivePath = (Resolve-Path './ds-hu-dsh-token-quota-2.6.0.tgz').Path
+$archivePath = (Resolve-Path './ds-hu-dsh-token-quota-2.7.0.tgz').Path
 & $desktopCli plugin --profile desktop add "file:$archivePath"
 ```
 
@@ -90,14 +107,14 @@ Offline install (run `npm pack` first to get the archive):
 Linux / macOS:
 
 ```bash
-dsh plugin --profile web add "file:$(pwd)/ds-hu-dsh-token-quota-2.6.0.tgz"
+dsh plugin --profile web add "file:$(pwd)/ds-hu-dsh-token-quota-2.7.0.tgz"
 dsh --profile web
 ```
 
 Windows PowerShell:
 
 ```powershell
-$archivePath = (Resolve-Path './ds-hu-dsh-token-quota-2.6.0.tgz').Path
+$archivePath = (Resolve-Path './ds-hu-dsh-token-quota-2.7.0.tgz').Path
 dsh plugin --profile web add "file:$archivePath"
 dsh --profile web
 ```
@@ -334,8 +351,8 @@ npm pack
 Real-host verification uses a separate data directory and profile and does not touch your daily configuration:
 
 ```powershell
-npm run test:desktop -- --app 'C:/path/DeepSeek Harness.exe' --package 'C:/path/ds-hu-dsh-token-quota-2.6.0.tgz' --output '.scratch/desktop-v2-check'
-node scripts/verify-web.mjs --app 'C:/path/DeepSeek Harness.exe' --package 'C:/path/ds-hu-dsh-token-quota-2.6.0.tgz' --output '.scratch/web-v2-check'
+npm run test:desktop -- --app 'C:/path/DeepSeek Harness.exe' --package 'C:/path/ds-hu-dsh-token-quota-2.7.0.tgz' --output '.scratch/desktop-v2-check'
+node scripts/verify-web.mjs --app 'C:/path/DeepSeek Harness.exe' --package 'C:/path/ds-hu-dsh-token-quota-2.7.0.tgz' --output '.scratch/web-v2-check'
 npm run test:lifecycle -- --app 'C:/path/DeepSeek Harness.exe' --output '.scratch/lifecycle-v2-check'
 ```
 
@@ -343,7 +360,7 @@ The output directory must not have been used before. Supplier parsing tests use 
 Web checks cover installation, the UI, configuration persistence and rescanning, and do not send chat messages or
 configure real supplier keys.
 
-[Windows desktop notes](docs/windows-desktop-adaptation.md) · [Single-panel refactor](docs/single-panel-refactor-execution.md) · [ADR-0002](docs/adr/0002-single-monitor-surface.md) · [v2.5.0 release record](docs/v2.5.0-release-execution.md) · [v2.6.0 release record](docs/v2.6.0-release-execution.md)
+[Windows desktop notes](docs/windows-desktop-adaptation.md) · [Single-panel refactor](docs/single-panel-refactor-execution.md) · [ADR-0002](docs/adr/0002-single-monitor-surface.md) · [v2.6.0 release record](docs/v2.6.0-release-execution.md) · [v2.7.0 release record](docs/v2.7.0-release-execution.md)
 
 ## Credits
 
