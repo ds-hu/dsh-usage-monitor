@@ -9,6 +9,7 @@ import test from "node:test";
 import {
   COVERED_YEARS,
   HOLIDAY_OVERRIDE_LIMIT,
+  HOLIDAY_VALLEY,
   PEAK_VALLEY_FROM_MS,
   beijingClock,
   beijingDayKey,
@@ -103,14 +104,55 @@ test("describeSeason 只给结论，客户端不复制规则", () => {
 });
 
 test("覆盖表缺失时给可读告警，配置了覆盖表就不再打扰", () => {
-  // 2026 视点：当年已覆盖、次年（2027）尚未录入 —— 正是当前真实状态
-  const warning = coverageWarning(bj(2026, 10, 13, 10, 0));
+  // 内置表已覆盖 2026 与 2027：2026 视点当年与次年都在表内，不该再打扰
+  assert.deepEqual(COVERED_YEARS, ["2026", "2027"]);
+  assert.equal(coverageWarning(bj(2026, 10, 13, 10, 0)), null);
+  // 2027 视点：次年（2028）尚未录入 —— 告警必须点名它，且不牵连已覆盖的年份
+  const warning = coverageWarning(bj(2027, 10, 13, 10, 0));
   assert.equal(typeof warning, "string");
-  assert.ok(warning.includes("2027"), "缺次年必须点名：" + warning);
-  assert.ok(!warning.includes("缺少 2026"), "当年已覆盖，不该被列为缺失：" + warning);
-  assert.ok(COVERED_YEARS.includes("2026"));
+  assert.ok(warning.includes("2028"), "缺次年必须点名：" + warning);
+  assert.ok(!/缺少 202[67]/.test(warning), "已覆盖年份不该被列为缺失：" + warning);
   // 用户自己贴了覆盖表 → 由用户负责覆盖范围，宿主不再提示
-  assert.equal(coverageWarning(bj(2026, 10, 13, 10, 0), ["2027-01-01"]), null);
+  assert.equal(coverageWarning(bj(2027, 10, 13, 10, 0), ["2028-01-01"]), null);
+});
+
+test("2027 年内置表：29 天逐项钉死，工作日假期一律谷价", () => {
+  // 逐项比对而不是只比天数：补录时打错一天（例如把 2/13 写成 2/12）必须在这里红
+  const days2027 = Object.keys(HOLIDAY_VALLEY).filter((day) => day.startsWith("2027-")).sort();
+  assert.deepEqual(days2027, [
+    "2027-01-01", "2027-01-02", "2027-01-03",
+    "2027-02-05", "2027-02-06", "2027-02-07", "2027-02-08", "2027-02-09",
+    "2027-02-10", "2027-02-11", "2027-02-12", "2027-02-13",
+    "2027-04-03", "2027-04-04", "2027-04-05",
+    "2027-05-01", "2027-05-02", "2027-05-03", "2027-05-04", "2027-05-05",
+    "2027-06-09",
+    "2027-09-15",
+    "2027-10-01", "2027-10-02", "2027-10-03", "2027-10-04",
+    "2027-10-05", "2027-10-06", "2027-10-07",
+  ]);
+  // 补录不得顺手改动既有年份（2026 那 33 天）
+  assert.equal(Object.keys(HOLIDAY_VALLEY).filter((day) => day.startsWith("2026-")).length, 33);
+
+  // 元旦 1/1 是周五 —— 「缺表就按峰价多算钱」的典型样本：工作日假期
+  const newYear = bj(2027, 1, 1, 10, 0);
+  assert.equal(isPeak(newYear), false, "2027-01-01 周五 10:00 必须谷价");
+  assert.equal(dayKind(newYear), "holiday");
+
+  // 春节 9 天连续谷价，节后首个工作日 09:00 回峰
+  const spring = bj(2027, 2, 9, 10, 0);
+  assert.equal(isPeak(spring), false);
+  assert.equal(describeSeason(spring).valleyReason, "holiday");
+  assert.equal(tierOfHour(bj(2027, 2, 9, 9, 0).getTime()), "valley", "春节里 09:00 那格是谷价");
+  assert.equal(nextFlip(spring), bj(2027, 2, 15, 9, 0).getTime(), "春节中的下次切换是节后首个工作日");
+  assert.equal(isPeak(bj(2027, 2, 15, 9, 0)), true, "2/15 周一 09:00 回峰");
+
+  // 中秋是单独一天：次日（9/16 周四）回峰，不是与国庆连休
+  assert.equal(dayKind(bj(2027, 9, 15, 10, 0)), "holiday");
+  assert.equal(isPeak(bj(2027, 9, 16, 10, 0)), true, "9/16 周四 10:00 应是峰价");
+
+  // 调休上班日（10/9 周六）仍按周末算谷价：官方规则是「周末全天谷价」，不看是否上班
+  assert.equal(dayKind(bj(2027, 10, 9, 10, 0)), "weekend");
+  assert.equal(isPeak(bj(2027, 10, 9, 10, 0)), false);
 });
 
 test("normalizeHolidays 对坏配置只丢弃、不抛异常", () => {

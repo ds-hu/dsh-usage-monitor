@@ -120,10 +120,10 @@ test("season rides on /state as a host verdict; the holiday override round-trips
   assert.equal(first.season.beijing.weekday, weekdayNames[new Date(now.getTime() + 8 * 3600_000).getUTCDay()]);
   assert.equal(first.season.beijing.dayKey, beijingDayKey(now));
   if (first.season.flipAt !== null) assert.ok(first.season.flipAt > now.getTime(), "切换时刻必须在未来");
-  assert.match(first.season.warning, /2027/, "缺次年必须在载荷里点名");
-  assert.equal(first.season.warning,
-    "节假日表缺少 2027 年的安排，工作日假期会被误判为峰价；可在用量监控设置里粘贴节假日覆盖表（已覆盖：2026）。");
-  assert.ok(warnings.some((line) => /2027/.test(line)), "启动自检也要留一条日志：" + warnings.join(" | "));
+  // 内置表已覆盖 2026 与 2027：真实日期下不该再点名这两年被缺。这里刻意用负断言而不是钉死整句文案，
+  // 否则用例会在次年 1 月 1 日自己变红；缺年文案的精确文本与视点由 test/season.mjs 的注入式用例负责。
+  assert.ok(!/缺少 202[67]/.test(String(first.season.warning)), "已覆盖年份不该被点名：" + first.season.warning);
+  assert.ok(!warnings.some((line) => /缺少 202[67]/.test(line)), "启动自检也不该报缺年：" + warnings.join(" | "));
   // 拆分只给 DeepSeek，其他供应商恒为 null（峰谷价只对 DeepSeek 成立）
   assert.deepEqual(first.suppliers.find((s) => s.id === "deepseek").seasonSplit,
     { peakTokens: 0, valleyTokens: 0, unknownTokens: 0 });
